@@ -9,15 +9,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -36,6 +44,8 @@ import com.claudecode.mobile.ui.screens.chat.ChatScreen
 import com.claudecode.mobile.ui.screens.chat.ChatViewModel
 import com.claudecode.mobile.ui.screens.projects.ProjectListScreen
 import com.claudecode.mobile.ui.screens.projects.ProjectListViewModel
+import com.claudecode.mobile.ui.screens.sessions.SessionListScreen
+import com.claudecode.mobile.ui.screens.settings.SettingsScreen
 
 // ============================================================
 // CloudCLI 导航图
@@ -54,6 +64,9 @@ object Routes {
 
     /** 项目列表页面 */
     const val PROJECTS = "projects"
+
+    /** 主页面 (包含底部 Tab: 项目 + 对话 + 设置) */
+    const val MAIN = "main"
 
     /** 聊天页面 (带项目ID和会话ID参数) */
     const val CHAT = "chat/{projectId}/{sessionId}"
@@ -97,8 +110,8 @@ fun CloudNavGraph(
             LoginScreen(
                 viewModel = viewModel(),
                 onLoginSuccess = {
-                    // 登录成功后导航到项目列表页
-                    navController.navigate(Routes.PROJECTS) {
+                    // 登录成功后导航到主页面 (底部 Tab 导航)
+                    navController.navigate(Routes.MAIN) {
                         // 清除返回栈，防止按返回键回到登录页
                         popUpTo(Routes.LOGIN) { inclusive = true }
                     }
@@ -119,17 +132,9 @@ fun CloudNavGraph(
             )
         }
 
-        // --- 项目列表页面 (已实现) ---
-        composable(Routes.PROJECTS) {
-            ProjectListScreen(
-                viewModel = viewModel(),
-                onNavigateToChat = { projectId, sessionId ->
-                    navController.navigate(Routes.chatRoute(projectId, sessionId))
-                },
-                onNavigateToSettings = {
-                    navController.navigate(Routes.SETTINGS)
-                }
-            )
+        // --- 主页面 (底部 Tab 导航: 项目 + 对话 + 设置) ---
+        composable(Routes.MAIN) {
+            MainScreen(navController = navController)
         }
 
         // --- 聊天页面 (已实现, 带项目ID和会话ID参数) ---
@@ -162,15 +167,6 @@ fun CloudNavGraph(
             )
         }
 
-        // --- 设置页面 ---
-        composable(Routes.SETTINGS) {
-            PlaceholderScreen(
-                title = "设置",
-                subtitle = "应用偏好设置与服务器管理",
-                icon = Icons.Filled.Settings
-            )
-        }
-
         // --- Git 管理页面 (带项目ID参数) ---
         composable(
             route = Routes.GIT,
@@ -184,6 +180,87 @@ fun CloudNavGraph(
                 subtitle = "项目: $projectId",
                 icon = Icons.Filled.Code
             )
+        }
+    }
+}
+
+// ============================================================
+// 主页面 - 底部 Tab 导航容器
+// ============================================================
+
+/**
+ * 主页面 Composable
+ * 包含底部导航栏，支持在 项目 / 对话 / 设置 三个 Tab 之间切换
+ *
+ * @param navController 导航控制器 (用于跳转到聊天页等子页面)
+ */
+@Composable
+fun MainScreen(navController: NavHostController) {
+    // 当前选中的 Tab 索引: 0=项目, 1=对话, 2=设置
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                // Tab 1: 项目
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Icon(Icons.Filled.Folder, contentDescription = "项目") },
+                    label = { Text("项目") }
+                )
+                // Tab 2: 对话
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = { Icon(Icons.Filled.Chat, contentDescription = "对话") },
+                    label = { Text("对话") }
+                )
+                // Tab 3: 设置
+                NavigationBarItem(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = "设置") },
+                    label = { Text("设置") }
+                )
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding)) {
+            when (selectedTab) {
+                // 项目 Tab: 显示项目列表
+                0 -> ProjectListScreen(
+                    viewModel = viewModel(),
+                    onNavigateToChat = { projectId, sessionId ->
+                        navController.navigate(Routes.chatRoute(projectId, sessionId))
+                    },
+                    onNavigateToSettings = {
+                        // 设置已移至底部 Tab，直接切换到设置 Tab
+                        selectedTab = 2
+                    }
+                )
+                // 对话 Tab: 显示会话列表
+                1 -> SessionListScreen(
+                    viewModel = viewModel(),
+                    onNavigateToChat = { projectId, sessionId ->
+                        navController.navigate(Routes.chatRoute(projectId, sessionId))
+                    }
+                )
+                // 设置 Tab: 显示设置页
+                2 -> SettingsScreen(
+                    viewModel = viewModel(),
+                    onBack = {
+                        // 返回到项目 Tab
+                        selectedTab = 0
+                    },
+                    onLoggedOut = {
+                        // 登出后导航到登录页，并清除主页面返回栈
+                        navController.navigate(Routes.LOGIN) {
+                            popUpTo(Routes.MAIN) { inclusive = true }
+                        }
+                    }
+                )
+            }
         }
     }
 }

@@ -126,3 +126,17 @@ data class Session(
 data class SessionListResponse(
     val sessions: List<Session> = emptyList()
 )
+
+/**
+ * 通用删除响应
+ *
+ * 用于 DELETE 接口的返回结果。
+ *
+ * @param success 是否成功
+ * @param error 错误信息
+ */
+@Serializable
+data class DeleteResponse(
+    val success: Boolean = false,
+    val error: String? = null
+)

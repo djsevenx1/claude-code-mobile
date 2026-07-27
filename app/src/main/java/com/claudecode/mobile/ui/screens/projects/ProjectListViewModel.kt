@@ -73,6 +73,7 @@ data class ChatNavigation(
  * @param newProjectPath 新建项目 - 项目路径 (可选)
  * @param newProjectDisplayName 新建项目 - 展示名称 (可选)
  * @param isLoadingSessions 是否正在加载会话列表 (点击项目后)
+ * @param searchQuery 当前搜索关键字 (用于实时过滤项目列表)
  */
 data class ProjectListScreenState(
     val uiState: ProjectListUiState = ProjectListUiState.Loading,
@@ -83,7 +84,8 @@ data class ProjectListScreenState(
     val newProjectName: String = "",
     val newProjectPath: String = "",
     val newProjectDisplayName: String = "",
-    val isLoadingSessions: Boolean = false
+    val isLoadingSessions: Boolean = false,
+    val searchQuery: String = ""
 )
 
 /**
@@ -340,6 +342,43 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     /** 清除创建项目的错误信息 */
     fun clearCreateError() {
         _uiState.update { it.copy(createError = null) }
+    }
+
+    // ==================== 搜索过滤 ====================
+
+    /**
+     * 更新搜索关键字
+     *
+     * UI 层搜索框输入时调用，实时更新 [ProjectListScreenState.searchQuery]，
+     * 由 Compose 端在渲染前调用 [filterProjects] 完成列表过滤。
+     *
+     * @param query 新的搜索关键字
+     */
+    fun updateSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    /**
+     * 按搜索关键字过滤项目列表
+     *
+     * 搜索逻辑集中在此处 (ViewModel 层)，匹配项目的 name、path、displayName 字段，
+     * 不区分大小写。当 query 为空白时直接返回原始列表。
+     *
+     * @param projects 原始项目列表 (Success 状态下的全部项目)
+     * @param query 搜索关键字 (取自 [ProjectListScreenState.searchQuery])
+     * @return 过滤后的项目列表
+     */
+    fun filterProjects(projects: List<Project>, query: String): List<Project> {
+        if (query.isBlank()) return projects
+        val lowerQuery = query.trim().lowercase()
+        return projects.filter { project ->
+            // 匹配项目名称
+            project.name.lowercase().contains(lowerQuery) ||
+            // 匹配项目路径
+            project.path.lowercase().contains(lowerQuery) ||
+            // 匹配展示名称 (字段可能为空)
+            project.displayName?.lowercase()?.contains(lowerQuery) == true
+        }
     }
 
     // ==================== 辅助方法 ====================

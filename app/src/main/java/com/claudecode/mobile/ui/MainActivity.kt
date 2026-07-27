@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     // 根据登录状态决定起始页面
                     val startDestination = when (isLoggedIn) {
-                        true -> Routes.PROJECTS    // 已登录 -> 项目列表
+                        true -> Routes.MAIN        // 已登录 -> 主页面 (底部 Tab 导航)
                         false -> Routes.LOGIN      // 未登录 -> 登录页
                         null -> Routes.LOGIN       // 检查中 -> 默认登录页 (Splash 会覆盖)
                     }

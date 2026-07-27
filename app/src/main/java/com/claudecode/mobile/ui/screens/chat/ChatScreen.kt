@@ -32,12 +32,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,6 +51,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -72,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.claudecode.mobile.network.ConnectionState
+import com.claudecode.mobile.network.dto.ModelInfo
 
 // ============================================================
 // 聊天页面
@@ -136,11 +141,6 @@ fun ChatScreen(
                 )
             }
 
-            // --- token 用量信息条 (若有) ---
-            if (uiState.tokenUsage != null) {
-                TokenUsageBar(usage = uiState.tokenUsage!!)
-            }
-
             // --- 消息列表 ---
             LazyColumn(
                 modifier = Modifier
@@ -161,7 +161,12 @@ fun ChatScreen(
                 }
             }
 
-            // --- 底部输入区域 ---
+            // --- token 用量信息条 (输入栏正上方，若有) ---
+            if (uiState.tokenUsage != null) {
+                TokenUsageBar(usage = uiState.tokenUsage!!)
+            }
+
+            // --- 底部输入区域 (含模型选择器) ---
             ChatInputBar(
                 text = uiState.inputText,
                 onTextChange = viewModel::updateInputText,
@@ -169,7 +174,10 @@ fun ChatScreen(
                     keyboardController?.hide()
                     viewModel.sendMessage()
                 },
-                enabled = !uiState.isSending
+                enabled = !uiState.isSending,
+                availableModels = uiState.availableModels,
+                selectedModel = uiState.selectedModel,
+                onSelectModel = viewModel::selectModel
             )
         }
     }
@@ -623,80 +631,165 @@ private fun ErrorMessageBubble(message: ChatUiMessage) {
 /**
  * 底部输入区域
  *
- * 包含多行输入框和发送按钮。
+ * 包含模型选择器、多行输入框和发送按钮。
  * 发送中 (enabled = false) 时输入框禁用。
  *
  * @param text 当前输入文本
  * @param onTextChange 输入文本变化回调
  * @param onSend 发送按钮回调
  * @param enabled 输入框是否可用 (发送中禁用)
+ * @param availableModels 可用模型列表
+ * @param selectedModel 当前选中的模型标识
+ * @param onSelectModel 模型选择回调
  */
 @Composable
 private fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    enabled: Boolean
+    enabled: Boolean,
+    availableModels: List<ModelInfo>,
+    selectedModel: String,
+    onSelectModel: (String) -> Unit
 ) {
+    // 模型下拉菜单展开状态
+    var modelMenuExpanded by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 4.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .imePadding()                // 键盘弹出时自动添加底部 padding
                 .navigationBarsPadding()     // 避开系统导航栏
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Bottom
         ) {
-            // --- 多行输入框 ---
-            OutlinedTextField(
-                value = text,
-                onValueChange = onTextChange,
+            // --- 模型选择行 (仅当有可用模型时显示) ---
+            if (availableModels.isNotEmpty()) {
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 模型选择按钮 (小尺寸，显示模型名缩写)
+                        TextButton(
+                            onClick = { modelMenuExpanded = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Psychology,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = getModelAbbreviation(selectedModel, availableModels),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Icon(
+                                imageVector = Icons.Filled.ArrowDropDown,
+                                contentDescription = "选择模型",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // 模型下拉列表
+                    DropdownMenu(
+                        expanded = modelMenuExpanded,
+                        onDismissRequest = { modelMenuExpanded = false }
+                    ) {
+                        availableModels.forEach { model ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(
+                                            text = model.name?.takeIf { it.isNotBlank() }
+                                                ?: model.id,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = model.id,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onSelectModel(model.id)
+                                    modelMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // --- 输入框 + 发送按钮 ---
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp, max = 120.dp),
-                placeholder = {
-                    Text(
-                        text = "输入消息...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                },
-                enabled = enabled,
-                maxLines = 5,
-                keyboardOptions = KeyboardOptions(
-                    imeAction = ImeAction.Default
-                ),
-                shape = RoundedCornerShape(24.dp),
-                textStyle = MaterialTheme.typography.bodyMedium
-            )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // --- 发送按钮 ---
-            IconButton(
-                onClick = onSend,
-                enabled = enabled && text.isNotBlank(),
-                modifier = Modifier.size(48.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Bottom
             ) {
-                if (!enabled) {
-                    // 发送中显示加载指示器
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "发送",
-                        tint = if (text.isNotBlank())
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                    )
+                // --- 多行输入框 ---
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp, max = 120.dp),
+                    placeholder = {
+                        Text(
+                            text = "输入消息...",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    },
+                    enabled = enabled,
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Default
+                    ),
+                    shape = RoundedCornerShape(24.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // --- 发送按钮 ---
+                IconButton(
+                    onClick = onSend,
+                    enabled = enabled && text.isNotBlank(),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    if (!enabled) {
+                        // 发送中显示加载指示器
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "发送",
+                            tint = if (text.isNotBlank())
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        )
+                    }
                 }
             }
         }
@@ -837,4 +930,38 @@ private fun parseInlineMarkdown(
             }
         }
     }
+}
+
+// ============================================================
+// 辅助函数: 模型展示
+// ============================================================
+
+/**
+ * 获取模型展示名称
+ *
+ * 优先使用 [ModelInfo.name]，其次使用 modelId。
+ * 当 modelId 为空时返回 "默认模型"。
+ *
+ * @param modelId 模型标识
+ * @param models 可用模型列表
+ * @return 模型展示名称
+ */
+private fun getModelDisplayName(modelId: String, models: List<ModelInfo>): String {
+    val model = models.find { it.id == modelId }
+    return model?.name?.takeIf { it.isNotBlank() }
+        ?: modelId.ifBlank { "默认模型" }
+}
+
+/**
+ * 获取模型名缩写
+ *
+ * 用于底部输入栏的小尺寸按钮，过长时截断并添加省略号。
+ *
+ * @param modelId 模型标识
+ * @param models 可用模型列表
+ * @return 模型名缩写
+ */
+private fun getModelAbbreviation(modelId: String, models: List<ModelInfo>): String {
+    val name = getModelDisplayName(modelId, models)
+    return if (name.length > 16) name.take(16) + "…" else name
 }

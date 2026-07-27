@@ -3,6 +3,7 @@ package com.claudecode.mobile.network
 import com.claudecode.mobile.network.dto.AuthStatus
 import com.claudecode.mobile.network.dto.CreateProjectRequest
 import com.claudecode.mobile.network.dto.CreateProjectResponse
+import com.claudecode.mobile.network.dto.DeleteResponse
 import com.claudecode.mobile.network.dto.GitCommitRequest
 import com.claudecode.mobile.network.dto.GitCommitResponse
 import com.claudecode.mobile.network.dto.GitStatus
@@ -16,6 +17,7 @@ import com.claudecode.mobile.network.dto.Session
 import com.claudecode.mobile.network.dto.UpdateSettingsResponse
 import com.claudecode.mobile.network.dto.UserSettings
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
@@ -108,6 +110,38 @@ interface CloudApi {
     suspend fun getProjectSessions(
         @Path("projectId") projectId: String
     ): List<Session>
+
+    /**
+     * 获取所有会话列表 (跨项目)
+     *
+     * GET /api/sessions
+     *
+     * @return 全部会话列表
+     */
+    @GET("api/sessions")
+    suspend fun getAllSessions(): List<Session>
+
+    /**
+     * 删除指定会话
+     *
+     * DELETE /api/sessions/{sessionId}
+     *
+     * @param sessionId 会话标识
+     * @return 删除结果
+     */
+    @DELETE("api/sessions/{sessionId}")
+    suspend fun deleteSession(@Path("sessionId") sessionId: String): DeleteResponse
+
+    /**
+     * 删除指定项目
+     *
+     * DELETE /api/projects/{projectId}
+     *
+     * @param projectId 项目标识
+     * @return 删除结果
+     */
+    @DELETE("api/projects/{projectId}")
+    suspend fun deleteProject(@Path("projectId") projectId: String): DeleteResponse
 
     // ===================== 设置相关 =====================
 

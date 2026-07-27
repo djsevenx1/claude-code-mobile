@@ -20,11 +20,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -164,13 +166,26 @@ fun ProjectListScreen(
                 }
 
                 is ProjectListUiState.Success -> {
-                    // 成功状态：项目列表 (支持下拉刷新)
-                    ProjectListContent(
-                        projects = state.projects,
-                        isRefreshing = uiState.isRefreshing,
-                        onRefresh = viewModel::refreshProjects,
-                        onProjectClick = viewModel::onProjectClicked
-                    )
+                    // 成功状态：搜索框 + 项目列表 (支持下拉刷新)
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // 顶部搜索框 (仅在列表加载成功时显示)
+                        ProjectSearchBar(
+                            query = uiState.searchQuery,
+                            onQueryChange = viewModel::updateSearchQuery
+                        )
+                        // 项目列表内容 (按搜索关键字过滤后传入)
+                        ProjectListContent(
+                            projects = viewModel.filterProjects(
+                                state.projects,
+                                uiState.searchQuery
+                            ),
+                            searchQuery = uiState.searchQuery,
+                            isRefreshing = uiState.isRefreshing,
+                            onRefresh = viewModel::refreshProjects,
+                            onProjectClick = viewModel::onProjectClicked,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
 
@@ -183,6 +198,63 @@ fun ProjectListScreen(
 }
 
 // ============================================================
+// 子组件: 搜索框
+// ============================================================
+
+/**
+ * 项目搜索框
+ *
+ * 位于 TopAppBar 下方、项目列表上方，圆角样式的 OutlinedTextField。
+ * - leadingIcon: 搜索图标
+ * - trailingIcon: 清除按钮 (仅当输入框有文字时显示)
+ * - 输入时实时回调 onQueryChange 触发列表过滤
+ *
+ * @param query 当前搜索关键字
+ * @param onQueryChange 搜索关键字变更回调
+ */
+@Composable
+private fun ProjectSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        placeholder = {
+            Text(
+                text = "搜索项目...",
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        trailingIcon = {
+            // 仅当有输入文字时显示清除按钮
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "清除搜索",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        singleLine = true,
+        shape = RoundedCornerShape(24.dp),
+        textStyle = MaterialTheme.typography.bodyMedium
+    )
+}
+
+// ============================================================
 // 子组件: 项目列表内容 (含下拉刷新)
 // ============================================================
 
@@ -191,33 +263,70 @@ fun ProjectListScreen(
  *
  * 使用 Material 3 的 [PullToRefreshBox] 实现下拉刷新，
  * 内部 LazyColumn 渲染项目卡片列表。
+ * 当传入的 [searchQuery] 非空且过滤后列表为空时，展示"未找到匹配项目"提示。
  *
- * @param projects 项目列表
+ * @param projects 项目列表 (已按搜索关键字过滤)
+ * @param searchQuery 当前搜索关键字 (用于判断是否为搜索无结果)
  * @param isRefreshing 是否正在刷新
  * @param onRefresh 下拉刷新回调
  * @param onProjectClick 项目点击回调
+ * @param modifier 修饰符
  */
 @Composable
 private fun ProjectListContent(
     projects: List<Project>,
+    searchQuery: String,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
-    onProjectClick: (Project) -> Unit
+    onProjectClick: (Project) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(
-                items = projects,
-                key = { project -> project.id ?: project.name }
-            ) { project ->
-                ProjectCard(
-                    project = project,
-                    onClick = { onProjectClick(project) }
-                )
+    Box(modifier = modifier.fillMaxSize()) {
+        if (projects.isEmpty() && searchQuery.isNotBlank()) {
+            // 搜索无结果：展示空提示 (区别于全局空状态)
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp),
+                        tint = MaterialTheme.colorScheme.outline
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "未找到匹配的项目",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "尝试更换关键字",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(
+                    items = projects,
+                    key = { project -> project.id ?: project.name }
+                ) { project ->
+                    ProjectCard(
+                        project = project,
+                        onClick = { onProjectClick(project) }
+                    )
+                }
             }
         }
 
@@ -334,20 +443,29 @@ private fun ProjectCard(
                         color = MaterialTheme.colorScheme.outline
                     )
                 }
-                // 会话数
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Filled.Chat,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${project.sessionCount ?: 0} 个会话",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
+                // 会话数 (徽章样式，优化显示)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Chat,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${project.sessionCount ?: 0} 会话",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
                 }
             }
         }

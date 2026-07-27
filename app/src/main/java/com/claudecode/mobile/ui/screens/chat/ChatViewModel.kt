@@ -16,6 +16,7 @@ import com.claudecode.mobile.network.ConnectionState
 import com.claudecode.mobile.network.FrameKind
 import com.claudecode.mobile.network.NetworkModule
 import com.claudecode.mobile.network.TokenManager
+import com.claudecode.mobile.network.dto.ModelInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -85,6 +86,8 @@ data class ChatUiMessage(
  * @param projectName 项目名称 (TopAppBar 显示)
  * @param sessionId 当前会话 ID
  * @param tokenUsage 最近一次 token 用量信息
+ * @param availableModels 可用模型列表 (从服务端加载)
+ * @param selectedModel 当前选中的模型标识 (传给 ChatOptions.model)
  */
 data class ChatUiState(
     val messages: List<ChatUiMessage> = emptyList(),
@@ -93,7 +96,9 @@ data class ChatUiState(
     val isSending: Boolean = false,
     val projectName: String = "",
     val sessionId: String = "",
-    val tokenUsage: String? = null
+    val tokenUsage: String? = null,
+    val availableModels: List<ModelInfo> = emptyList(),
+    val selectedModel: String = ""
 )
 
 /**
@@ -150,6 +155,8 @@ class ChatViewModel(
         observeIncomingFrames()
         loadProjectInfo()
         loadHistoryIfAvailable()
+        // 加载可用模型列表 (供底部输入栏的模型选择器使用)
+        loadModels()
     }
 
     // ============================================================
@@ -469,12 +476,14 @@ class ChatViewModel(
         if (text.isBlank()) return
         if (_uiState.value.isSending) return
 
-        // 构造要发送的 ChatMessage
+        // 构造要发送的 ChatMessage (携带当前选中的模型)
         val chatMessage = ChatMessage(
             command = text,
             sessionId = currentSessionId.ifBlank { null },
             cwd = null,
-            options = ChatOptions()
+            options = ChatOptions(
+                model = _uiState.value.selectedModel.ifBlank { null }
+            )
         )
 
         // 本地立即添加用户消息 (乐观更新，提升响应速度)
@@ -517,6 +526,50 @@ class ChatViewModel(
      */
     fun updateInputText(text: String) {
         _uiState.update { it.copy(inputText = text) }
+    }
+
+    // ============================================================
+    // 模型选择
+    // ============================================================
+
+    /**
+     * 加载可用模型列表
+     *
+     * 调用 /api/providers/claude/models 获取 Claude 系列可用模型，
+     * 加载成功后若当前未选中任何模型，则默认选中列表首个模型。
+     * 加载失败时静默忽略，不影响主聊天流程。
+     */
+    private fun loadModels() {
+        viewModelScope.launch {
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                if (api != null) {
+                    val models = api.getModels("claude")
+                    _uiState.update {
+                        it.copy(
+                            availableModels = models,
+                            selectedModel = it.selectedModel.ifBlank {
+                                models.firstOrNull()?.id ?: ""
+                            }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // 模型列表加载失败不影响聊天主流程，静默忽略
+            }
+        }
+    }
+
+    /**
+     * 选择模型
+     *
+     * 由底部输入栏的模型选择器调用，更新 [ChatUiState.selectedModel]，
+     * 后续发送消息时会通过 [ChatOptions.model] 传给服务端。
+     *
+     * @param modelId 模型标识
+     */
+    fun selectModel(modelId: String) {
+        _uiState.update { it.copy(selectedModel = modelId) }
     }
 
     // ============================================================
