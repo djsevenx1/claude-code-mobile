@@ -13,8 +13,8 @@ android {
         applicationId = "com.claudecode.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.3.0"
+        versionCode = 20
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

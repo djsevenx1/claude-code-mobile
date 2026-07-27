@@ -76,7 +76,7 @@ import com.claudecode.mobile.network.dto.ModelInfo
 // ============================================================
 
 /** 应用版本号 */
-private const val APP_VERSION = "1.3.0"
+private const val APP_VERSION = "1.3.1"
 
 /** 报告问题页面 URL */
 private const val ISSUE_URL = "https://github.com/djsevenx1/claude-code-mobile/issues"

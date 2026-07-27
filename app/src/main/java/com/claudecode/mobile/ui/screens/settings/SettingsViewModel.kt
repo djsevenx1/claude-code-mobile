@@ -91,7 +91,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 try {
                     val api = NetworkModule.createCloudApiFromConfig()
                     if (api != null) {
-                        val models = api.getModels("claude")
+                        val response = api.getModels("claude")
+                        val models = response.data?.models ?: emptyList()
                         _uiState.update { it.copy(availableModels = models) }
                     }
                 } catch (e: Exception) {

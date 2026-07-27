@@ -97,7 +97,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
     /**
      * 加载所有会话列表 (首次加载 / 重试)
      *
-     * 设置 Loading 状态 -> 调用 API -> 更新为 Success / Empty / Error
+     * 设置 Loading 状态 -> 调用 API -> 解包 {success, data:{sessions}} -> 更新状态
      */
     fun loadSessions() {
         viewModelScope.launch {
@@ -107,7 +107,8 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址，请先登录")
 
-                val sessions = api.getRunningSessions()
+                val response = api.getRunningSessions()
+                val sessions = response.data?.sessions ?: emptyList()
                 allSessions = sessions
                 applySearchFilter()
             } catch (e: Exception) {
@@ -132,7 +133,8 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址")
 
-                val sessions = api.getRunningSessions()
+                val response = api.getRunningSessions()
+                val sessions = response.data?.sessions ?: emptyList()
                 allSessions = sessions
                 _uiState.update { it.copy(isRefreshing = false) }
                 applySearchFilter()

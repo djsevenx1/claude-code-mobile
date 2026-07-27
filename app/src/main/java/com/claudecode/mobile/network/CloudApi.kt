@@ -1,5 +1,6 @@
 package com.claudecode.mobile.network
 
+import com.claudecode.mobile.network.dto.ArchivedProjectsResponse
 import com.claudecode.mobile.network.dto.AuthStatus
 import com.claudecode.mobile.network.dto.CreateProjectRequest
 import com.claudecode.mobile.network.dto.CreateProjectResponse
@@ -14,9 +15,11 @@ import com.claudecode.mobile.network.dto.LoginRequest
 import com.claudecode.mobile.network.dto.LoginResponse
 import com.claudecode.mobile.network.dto.MessageHistoryResponse
 import com.claudecode.mobile.network.dto.ModelInfo
+import com.claudecode.mobile.network.dto.ModelsResponse
 import com.claudecode.mobile.network.dto.Project
 import com.claudecode.mobile.network.dto.RegisterRequest
 import com.claudecode.mobile.network.dto.Session
+import com.claudecode.mobile.network.dto.SessionsResponse
 import com.claudecode.mobile.network.dto.UserInfo
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -25,6 +28,7 @@ import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 /**
  * CloudCLI REST API 接口定义
@@ -64,9 +68,9 @@ interface CloudApi {
     @GET("api/projects")
     suspend fun getProjects(): List<Project>
 
-    /** GET /api/projects/archived - 获取已归档项目 */
+    /** GET /api/projects/archived - 获取已归档项目 (包装格式) */
     @GET("api/projects/archived")
-    suspend fun getArchivedProjects(): List<Project>
+    suspend fun getArchivedProjects(): ArchivedProjectsResponse
 
     /** POST /api/projects/create-project - 创建项目 */
     @POST("api/projects/create-project")
@@ -108,20 +112,21 @@ interface CloudApi {
     @POST("api/providers/sessions")
     suspend fun createSession(@Body request: CreateSessionRequest): CreateSessionResponse
 
-    /** GET /api/providers/sessions/running - 获取所有运行中的会话 */
+    /** GET /api/providers/sessions/running - 获取所有运行中的会话 (包装格式) */
     @GET("api/providers/sessions/running")
-    suspend fun getRunningSessions(): List<Session>
+    suspend fun getRunningSessions(): SessionsResponse
 
-    /** GET /api/providers/sessions/archived - 获取已归档的会话 */
+    /** GET /api/providers/sessions/archived - 获取已归档的会话 (包装格式) */
     @GET("api/providers/sessions/archived")
-    suspend fun getArchivedSessions(): List<Session>
+    suspend fun getArchivedSessions(): SessionsResponse
 
-    /** GET /api/providers/search/sessions - 搜索会话 */
+    /** GET /api/providers/search/sessions - 搜索会话 (SSE 流式响应) */
+    @Streaming
     @GET("api/providers/search/sessions")
     suspend fun searchSessions(
         @Query("q") query: String,
         @Query("limit") limit: Int = 50
-    ): List<Session>
+    ): okhttp3.ResponseBody
 
     /** DELETE /api/providers/sessions/{sessionId} - 删除/归档会话 */
     @DELETE("api/providers/sessions/{sessionId}")
@@ -159,9 +164,9 @@ interface CloudApi {
 
     // ===================== 模型相关 =====================
 
-    /** GET /api/providers/{provider}/models - 获取指定提供商的模型列表 */
+    /** GET /api/providers/{provider}/models - 获取指定提供商的模型列表 (包装格式) */
     @GET("api/providers/{provider}/models")
-    suspend fun getModels(@Path("provider") provider: String): List<ModelInfo>
+    suspend fun getModels(@Path("provider") provider: String): ModelsResponse
 
     /** GET /api/providers/capabilities - 获取所有提供商能力 */
     @GET("api/providers/capabilities")

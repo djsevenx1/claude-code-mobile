@@ -140,6 +140,60 @@ data class DeleteResponse(
 )
 
 // ============================================================
+// 包装响应 DTO (claudecodeui 使用 {success, data} 格式)
+// ============================================================
+
+/**
+ * 会话列表包装响应
+ *
+ * GET /api/providers/sessions/running 和 /archived 返回:
+ * { "success": true, "data": { "sessions": [...] } }
+ *
+ * @param success 是否成功
+ * @param data 会话数据
+ */
+@Serializable
+data class SessionsResponse(
+    val success: Boolean = false,
+    val data: SessionsData? = null
+)
+
+/**
+ * 会话列表数据
+ *
+ * @param sessions 会话数组
+ */
+@Serializable
+data class SessionsData(
+    val sessions: List<Session> = emptyList()
+)
+
+/**
+ * 已归档项目列表包装响应
+ *
+ * GET /api/projects/archived 返回:
+ * { "success": true, "data": { "projects": [...] } }
+ *
+ * @param success 是否成功
+ * @param data 项目数据
+ */
+@Serializable
+data class ArchivedProjectsResponse(
+    val success: Boolean = false,
+    val data: ArchivedProjectsData? = null
+)
+
+/**
+ * 已归档项目列表数据
+ *
+ * @param projects 项目数组
+ */
+@Serializable
+data class ArchivedProjectsData(
+    val projects: List<Project> = emptyList()
+)
+
+// ============================================================
 // 会话创建与消息历史 DTO
 // ============================================================
 
@@ -162,24 +216,42 @@ data class CreateSessionRequest(
 /**
  * 创建会话响应
  *
+ * POST /api/providers/sessions 返回:
+ * { "success": true, "data": { "sessionId": "...", ... } }
+ *
  * @param success 是否成功
- * @param sessionId 服务端分配的 app session id
- * @param session 会话详情（可选）
+ * @param data 会话数据 (createAppSession 的返回值)
  * @param error 错误信息
  */
 @Serializable
 data class CreateSessionResponse(
     val success: Boolean = false,
+    val data: CreateSessionData? = null,
+    val error: String? = null
+) {
+    /** 统一获取 sessionId（兼容不同字段名） */
+    fun getSessionIdSafe(): String? {
+        return data?.sessionId ?: data?.sessionIdAlt ?: data?.session?.id
+    }
+}
+
+/**
+ * 创建会话返回数据
+ *
+ * @param sessionId 会话标识 (camelCase)
+ * @param sessionIdAlt 会话标识 (snake_case 兼容)
+ * @param session 会话详情（可选）
+ */
+@Serializable
+data class CreateSessionData(
     @SerialName("sessionId")
     val sessionId: String? = null,
     @SerialName("session_id")
     val sessionIdAlt: String? = null,
-    val session: Session? = null,
-    val error: String? = null
-) {
-    /** 统一获取 sessionId（兼容不同字段名） */
-    fun getSessionIdSafe(): String? = sessionId ?: sessionIdAlt ?: session?.id
-}
+    @SerialName("id")
+    val id: String? = null,
+    val session: Session? = null
+)
 
 /**
  * 消息历史响应

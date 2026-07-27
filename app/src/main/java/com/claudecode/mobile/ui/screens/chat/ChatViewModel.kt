@@ -722,7 +722,8 @@ class ChatViewModel(
             try {
                 val api = NetworkModule.createCloudApiFromConfig()
                 if (api != null) {
-                    val models = api.getModels("claude")
+                    val response = api.getModels("claude")
+                    val models = response.data?.models ?: emptyList()
                     _uiState.update {
                         it.copy(
                             availableModels = models,

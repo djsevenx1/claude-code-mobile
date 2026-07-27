@@ -60,6 +60,35 @@ data class ModelListResponse(
 )
 
 /**
+ * 模型列表 API 包装响应
+ *
+ * GET /api/providers/{provider}/models 返回:
+ * { "success": true, "data": { "provider": "claude", "models": [...], "cache": {...} } }
+ *
+ * @param success 是否成功
+ * @param data 模型数据
+ */
+@Serializable
+data class ModelsResponse(
+    val success: Boolean = false,
+    val data: ModelsData? = null
+)
+
+/**
+ * 模型列表数据
+ *
+ * @param provider 提供商名称
+ * @param models 模型列表
+ * @param cache 缓存信息（可选）
+ */
+@Serializable
+data class ModelsData(
+    val provider: String? = null,
+    val models: List<ModelInfo> = emptyList(),
+    val cache: kotlinx.serialization.json.JsonElement? = null
+)
+
+/**
  * 健康检查响应
  *
  * GET /health
