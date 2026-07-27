@@ -54,6 +54,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: r0adkll/sign-android-release@v1
         id: sign_release
+        continue-on-error: true
         with:
           releaseDirectory: app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.SIGNING_KEY }}
