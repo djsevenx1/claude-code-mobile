@@ -70,12 +70,19 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          if [ -f app/build/outputs/apk/release/app-release-signed.apk ]; then
-            cp app/build/outputs/apk/release/app-release-signed.apk \
+          SIGNED_FILE="${{ steps.sign_release.outputs.signedReleaseFile }}"
+          echo "Signed release file: $SIGNED_FILE"
+          if [ -n "$SIGNED_FILE" ] && [ -f "$SIGNED_FILE" ]; then
+            cp "$SIGNED_FILE" ClaudeCodeMobile-${TAG}.apk
+            echo "Copied signed APK -> ClaudeCodeMobile-${TAG}.apk"
+          elif [ -f app/build/outputs/apk/release/app-release-unsigned-signed.apk ]; then
+            cp app/build/outputs/apk/release/app-release-unsigned-signed.apk \
                ClaudeCodeMobile-${TAG}.apk
+            echo "Copied signed APK (fallback) -> ClaudeCodeMobile-${TAG}.apk"
           else
-            cp app/build/outputs/apk/release/app-release-unsigned.apk \
-               ClaudeCodeMobile-${TAG}-unsigned.apk
+            echo "ERROR: Signed APK not found!"
+            ls -la app/build/outputs/apk/release/
+            exit 1
           fi
           cp app/build/outputs/apk/debug/app-debug.apk \
              ClaudeCodeMobile-${TAG}-debug.apk
