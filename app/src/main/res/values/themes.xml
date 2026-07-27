@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 主应用主题 (亮色模式) -->
     <style name="Theme.ClaudeCodeMobile" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryVariant">@color/colorPrimaryVariant</item>
@@ -12,9 +13,20 @@
         <item name="colorOnSurface">@color/colorOnSurface</item>
         <item name="colorError">@color/colorError</item>
         <item name="colorOnError">@color/colorOnError</item>
-        <item name="android:statusBarColor">@color/colorPrimary</item>
-        <item name="android:navigationBarColor">@color/colorSurface</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+
+    <!-- Splash Screen 主题 (启动画面) -->
+    <style name="Theme.ClaudeCodeMobile.Splash" parent="Theme.SplashScreen">
+        <!-- Splash 背景色 (品牌主色) -->
+        <item name="windowSplashScreenBackground">@color/colorPrimary</item>
+        <!-- Splash 图标 (使用 launcher 前景图标) -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <!-- Splash 结束后切换到主主题 -->
+        <item name="postSplashScreenTheme">@style/Theme.ClaudeCodeMobile</item>
     </style>
 
 </resources>

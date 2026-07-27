@@ -57,7 +57,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: r0adkll/sign-android-release@v1
         id: sign_release
-        continue-on-error: true
         with:
           releaseDirectory: app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.SIGNING_KEY }}
@@ -91,26 +90,18 @@ jobs:
           body: |
             ## Claude Code Mobile ${{ github.ref_name }}
 
-            Android client for Claude Code UI / CloudCLI.
+            Android native client for Claude Code UI / CloudCLI.
 
             ### Downloads
-            - **Signed APK**: `ClaudeCodeMobile-${{ github.ref_name }}.apk` (if signing key configured)
-            - **Debug APK**: `ClaudeCodeMobile-${{ github.ref_name }}-debug.apk` (always available)
+            - **Signed APK**: `ClaudeCodeMobile-${{ github.ref_name }}.apk` (official signed release)
+            - **Debug APK**: `ClaudeCodeMobile-${{ github.ref_name }}-debug.apk` (for testing)
 
             ### Installation
-            1. Download the APK to your Android device
+            1. Download the **Signed APK** to your Android device
             2. Enable "Install from unknown sources" in Settings
             3. Open the APK file to install
             4. Launch Claude Code Mobile
-            5. Go to Settings to add your CloudCLI server URL
-
-            ### Features
-            - WebView wrapper for CloudCLI / Claude Code UI
-            - Multiple server support with quick switching
-            - File upload support
-            - Pull to refresh
-            - Dark/light theme
-            - SSL trust options for local development
+            5. Configure your CloudCLI server URL and login
           files: |
             ClaudeCodeMobile-*.apk
           draft: false
