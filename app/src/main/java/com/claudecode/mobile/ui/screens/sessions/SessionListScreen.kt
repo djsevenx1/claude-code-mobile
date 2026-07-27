@@ -60,14 +60,14 @@ import com.claudecode.mobile.network.dto.Session
  *
  * @param viewModel 会话列表 ViewModel
  * @param onNavigateToChat 导航到聊天页面的回调 (参数: projectId, sessionId)
- * @param onBack 返回上一页回调
+ * @param onBack 返回上一页回调 (可选，在底部 Tab 中使用时为 null)
  * @param modifier 修饰符
  */
 @Composable
 fun SessionListScreen(
     viewModel: SessionListViewModel,
     onNavigateToChat: (projectId: String, sessionId: String) -> Unit,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // 收集 UI 状态 (跟随生命周期感知)
@@ -78,11 +78,14 @@ fun SessionListScreen(
             TopAppBar(
                 title = { Text("对话") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
-                        )
+                    // 仅当 onBack 不为空时显示返回按钮 (底部 Tab 中无需返回)
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回"
+                            )
+                        }
                     }
                 },
                 actions = {
