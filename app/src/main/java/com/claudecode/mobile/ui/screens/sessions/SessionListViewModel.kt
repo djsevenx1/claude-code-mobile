@@ -97,7 +97,9 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
     /**
      * 加载所有会话列表 (首次加载 / 重试)
      *
-     * 设置 Loading 状态 -> 调用 API -> 解包 {success, data:{sessions}} -> 更新状态
+     * 与 Web 端保持一致：通过 GET /api/projects 获取所有项目，
+     * 从每个项目的内嵌 sessions 字段中提取会话并合并为统一列表。
+     * (GET /api/providers/sessions/running 仅返回当前活跃的 CLI 进程，不含历史会话)
      */
     fun loadSessions() {
         viewModelScope.launch {
@@ -107,8 +109,9 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址，请先登录")
 
-                val response = api.getRunningSessions()
-                val sessions = response.data?.sessions ?: emptyList()
+                val projects = api.getProjects()
+                val sessions = projects.flatMap { it.sessions ?: emptyList() }
+                    .sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
                 allSessions = sessions
                 applySearchFilter()
             } catch (e: Exception) {
@@ -133,8 +136,9 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址")
 
-                val response = api.getRunningSessions()
-                val sessions = response.data?.sessions ?: emptyList()
+                val projects = api.getProjects()
+                val sessions = projects.flatMap { it.sessions ?: emptyList() }
+                    .sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
                 allSessions = sessions
                 _uiState.update { it.copy(isRefreshing = false) }
                 applySearchFilter()
@@ -187,10 +191,11 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
             current.isEmpty() -> SessionListUiState.Empty
             // 无搜索关键词，显示全部
             query.isBlank() -> SessionListUiState.Success(current)
-            // 按标题过滤
+            // 按标题或摘要过滤
             else -> {
                 val filtered = current.filter { session ->
-                    session.title?.contains(query, ignoreCase = true) == true
+                    session.title?.contains(query, ignoreCase = true) == true ||
+                    session.summary?.contains(query, ignoreCase = true) == true
                 }
                 if (filtered.isEmpty()) {
                     SessionListUiState.Empty
