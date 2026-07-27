@@ -74,6 +74,23 @@ data class ChatNavigation(
  * @param newProjectDisplayName 新建项目 - 展示名称 (可选)
  * @param isLoadingSessions 是否正在加载会话列表 (点击项目后)
  * @param searchQuery 当前搜索关键字 (用于实时过滤项目列表)
+ *
+ * 星标/重命名/删除/归档相关状态:
+ * @param showRenameDialog 是否展示重命名对话框
+ * @param renameProjectId 正在重命名的项目标识
+ * @param renameProjectName 重命名对话框中的新名称输入
+ * @param renameProjectOriginalName 正在重命名的项目原始名称 (用于对话框提示)
+ * @param renameError 重命名时的错误信息 (null 表示无错误)
+ * @param isRenaming 是否正在执行重命名请求
+ * @param showDeleteConfirmDialog 是否展示删除确认对话框
+ * @param deleteProjectId 待删除项目标识
+ * @param deleteProjectName 待删除项目名称 (用于确认对话框展示)
+ * @param isDeleting 是否正在执行删除请求
+ * @param showArchivedSheet 是否展示已归档项目底部 Sheet
+ * @param archivedProjects 已归档项目列表
+ * @param isLoadingArchived 是否正在加载已归档项目
+ * @param isRestoring 是否正在恢复归档项目
+ * @param snackbarMessage 一次性提示消息 (星标/删除/归档/恢复操作结果，展示后清空)
  */
 data class ProjectListScreenState(
     val uiState: ProjectListUiState = ProjectListUiState.Loading,
@@ -85,7 +102,26 @@ data class ProjectListScreenState(
     val newProjectPath: String = "",
     val newProjectDisplayName: String = "",
     val isLoadingSessions: Boolean = false,
-    val searchQuery: String = ""
+    val searchQuery: String = "",
+    // 重命名对话框状态
+    val showRenameDialog: Boolean = false,
+    val renameProjectId: String? = null,
+    val renameProjectName: String = "",
+    val renameProjectOriginalName: String = "",
+    val renameError: String? = null,
+    val isRenaming: Boolean = false,
+    // 删除确认对话框状态
+    val showDeleteConfirmDialog: Boolean = false,
+    val deleteProjectId: String? = null,
+    val deleteProjectName: String = "",
+    val isDeleting: Boolean = false,
+    // 已归档项目状态
+    val showArchivedSheet: Boolean = false,
+    val archivedProjects: List<Project> = emptyList(),
+    val isLoadingArchived: Boolean = false,
+    val isRestoring: Boolean = false,
+    // 一次性提示消息
+    val snackbarMessage: String? = null
 )
 
 /**
@@ -96,10 +132,14 @@ data class ProjectListScreenState(
  * 服务器 URL 与 token 由 TokenManager (DataStore) 自动管理。
  *
  * 职责：
- * 1. 加载项目列表 (首次进入 + 重试)
+ * 1. 加载项目列表 (首次进入 + 重试)，星标项目排在前面
  * 2. 下拉刷新项目列表
  * 3. 点击项目后加载会话列表并触发导航
  * 4. 创建新项目
+ * 5. 项目星标/取消星标 (乐观更新 + 刷新列表)
+ * 6. 项目重命名
+ * 7. 项目删除 (带确认对话框)
+ * 8. 项目归档与恢复 (查看已归档项目)
  */
 class ProjectListViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -131,7 +171,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址，请先登录")
 
-                val projects = api.getProjects()
+                // 加载并按星标优先排序 (星标项目排在前面)
+                val projects = sortProjects(api.getProjects())
 
                 if (projects.isEmpty()) {
                     _uiState.update { it.copy(uiState = ProjectListUiState.Empty) }
@@ -162,7 +203,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址")
 
-                val projects = api.getProjects()
+                // 刷新并按星标优先排序 (星标项目排在前面)
+                val projects = sortProjects(api.getProjects())
 
                 if (projects.isEmpty()) {
                     _uiState.update {
@@ -384,7 +426,479 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    // ==================== 项目星标 ====================
+
+    /**
+     * 切换项目星标状态 (星标 / 取消星标)
+     *
+     * 采用乐观更新策略：先在本地切换星标状态并重新排序 (星标项目排到前面)，
+     * 随后调用 API 持久化。成功后静默刷新列表以同步服务端最新状态；
+     * 失败时回滚本地状态并提示错误。
+     *
+     * API: POST /api/projects/{projectId}/toggle-star
+     *
+     * @param projectId 项目标识
+     */
+    fun toggleStar(projectId: String) {
+        if (projectId.isBlank()) return
+
+        viewModelScope.launch {
+            // 乐观更新：本地切换星标状态并重新排序
+            updateProjectsInState { projects ->
+                sortProjects(
+                    projects.map { project ->
+                        if (project.id == projectId) {
+                            project.copy(isStarred = !(project.isStarred ?: false))
+                        } else {
+                            project
+                        }
+                    }
+                )
+            }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                api.toggleProjectStar(projectId)
+
+                // 成功后静默刷新列表以同步服务端最新状态
+                reloadProjectsSilently()
+            } catch (e: Exception) {
+                // 失败：回滚本地星标状态
+                updateProjectsInState { projects ->
+                    sortProjects(
+                        projects.map { project ->
+                            if (project.id == projectId) {
+                                project.copy(isStarred = !(project.isStarred ?: false))
+                            } else {
+                                project
+                            }
+                        }
+                    )
+                }
+                _uiState.update { it.copy(snackbarMessage = formatErrorMessage(e)) }
+            }
+        }
+    }
+
+    // ==================== 项目重命名 ====================
+
+    /**
+     * 重命名项目
+     *
+     * 验证新名称非空 -> 调用重命名 API -> 成功后关闭对话框并刷新列表。
+     *
+     * API: PUT /api/projects/{projectId}/rename
+     * 请求体: { "name": newName }
+     *
+     * @param projectId 项目标识
+     * @param newName 新名称
+     */
+    fun renameProject(projectId: String, newName: String) {
+        val trimmedName = newName.trim()
+
+        // 输入验证 - 新名称不能为空
+        if (trimmedName.isBlank()) {
+            _uiState.update { it.copy(renameError = "请输入新的项目名称") }
+            return
+        }
+
+        // 与原名称相同则不重复请求
+        val original = _uiState.value.renameProjectOriginalName
+        if (trimmedName == original) {
+            _uiState.update { it.copy(showRenameDialog = false, renameError = null) }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRenaming = true, renameError = null) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.renameProject(projectId, mapOf("name" to trimmedName))
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "重命名失败")
+                }
+
+                // 重命名成功：关闭对话框并清空表单
+                _uiState.update {
+                    it.copy(
+                        isRenaming = false,
+                        showRenameDialog = false,
+                        renameError = null,
+                        renameProjectId = null,
+                        renameProjectName = "",
+                        renameProjectOriginalName = ""
+                    )
+                }
+
+                // 重新加载项目列表以展示新名称
+                reloadProjectsSilently()
+                _uiState.update { it.copy(snackbarMessage = "重命名成功") }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isRenaming = false,
+                        renameError = formatErrorMessage(e)
+                    )
+                }
+            }
+        }
+    }
+
+    // ==================== 项目删除 ====================
+
+    /**
+     * 删除项目
+     *
+     * 调用删除 API (force = false)，成功后从列表移除并提示。
+     * 注意：claudecodeui 的 DELETE /api/projects/{projectId} 在 force=false 时
+     * 表现为归档，此处保留与后端一致的语义。
+     *
+     * API: DELETE /api/projects/{projectId}?force=false
+     *
+     * @param projectId 项目标识
+     */
+    fun deleteProject(projectId: String) {
+        if (projectId.isBlank()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeleting = true) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.deleteProject(projectId, force = false)
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "删除项目失败")
+                }
+
+                // 删除成功：关闭确认对话框并从列表移除
+                _uiState.update {
+                    it.copy(
+                        isDeleting = false,
+                        showDeleteConfirmDialog = false,
+                        deleteProjectId = null,
+                        deleteProjectName = ""
+                    )
+                }
+
+                // 从当前列表中移除已删除项目 (无需等待完整刷新)
+                updateProjectsInState { projects ->
+                    projects.filterNot { it.id == projectId }
+                }
+
+                _uiState.update { it.copy(snackbarMessage = "项目已删除") }
+
+                // 静默刷新以同步服务端状态 (若列表变空会切换到 Empty)
+                reloadProjectsSilently()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isDeleting = false,
+                        snackbarMessage = formatErrorMessage(e)
+                    )
+                }
+            }
+        }
+    }
+
+    // ==================== 项目归档与恢复 ====================
+
+    /**
+     * 归档项目
+     *
+     * 调用 DELETE API (force = false) 将项目归档 (软删除)。
+     * 归档后从当前列表移除。
+     *
+     * API: DELETE /api/projects/{projectId}?force=false
+     *
+     * @param projectId 项目标识
+     */
+    fun archiveProject(projectId: String) {
+        if (projectId.isBlank()) return
+
+        viewModelScope.launch {
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.deleteProject(projectId, force = false)
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "归档项目失败")
+                }
+
+                // 归档成功：从当前列表移除
+                updateProjectsInState { projects ->
+                    projects.filterNot { it.id == projectId }
+                }
+
+                _uiState.update { it.copy(snackbarMessage = "项目已归档") }
+
+                // 静默刷新以同步服务端状态
+                reloadProjectsSilently()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(snackbarMessage = formatErrorMessage(e)) }
+            }
+        }
+    }
+
+    /**
+     * 加载已归档项目列表
+     *
+     * 展示已归档项目底部 Sheet 前调用，拉取归档项目数据。
+     *
+     * API: GET /api/projects/archived
+     * 响应包装格式: { "success": true, "data": { "projects": [...] } }
+     */
+    fun loadArchivedProjects() {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    showArchivedSheet = true,
+                    isLoadingArchived = true,
+                    archivedProjects = emptyList()
+                )
+            }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.getArchivedProjects()
+                val archived = response.data?.projects ?: emptyList()
+
+                _uiState.update {
+                    it.copy(
+                        isLoadingArchived = false,
+                        archivedProjects = archived
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoadingArchived = false,
+                        snackbarMessage = formatErrorMessage(e)
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 恢复已归档项目
+     *
+     * 从已归档列表中恢复项目到正常列表。
+     * 成功后从归档列表移除并刷新项目列表。
+     *
+     * API: POST /api/projects/{projectId}/restore
+     *
+     * @param projectId 项目标识
+     */
+    fun restoreArchivedProject(projectId: String) {
+        if (projectId.isBlank()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRestoring = true) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.restoreProject(projectId)
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "恢复项目失败")
+                }
+
+                // 恢复成功：从归档列表移除
+                _uiState.update { state ->
+                    state.copy(
+                        isRestoring = false,
+                        archivedProjects = state.archivedProjects.filterNot { it.id == projectId },
+                        snackbarMessage = "项目已恢复"
+                    )
+                }
+
+                // 刷新正常项目列表以展示恢复的项目
+                reloadProjectsSilently()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isRestoring = false,
+                        snackbarMessage = formatErrorMessage(e)
+                    )
+                }
+            }
+        }
+    }
+
+    // ==================== 操作对话框状态管理 ====================
+
+    /**
+     * 显示重命名对话框 (预填当前项目名称)
+     *
+     * @param project 待重命名的项目
+     */
+    fun showRenameDialog(project: Project) {
+        val projectId = project.id ?: return
+        val currentName = getProjectDisplayName(project)
+        _uiState.update {
+            it.copy(
+                showRenameDialog = true,
+                renameProjectId = projectId,
+                renameProjectName = currentName,
+                renameProjectOriginalName = currentName,
+                renameError = null
+            )
+        }
+    }
+
+    /** 隐藏重命名对话框 (重命名进行中时不允许关闭) */
+    fun hideRenameDialog() {
+        if (_uiState.value.isRenaming) return
+        _uiState.update {
+            it.copy(
+                showRenameDialog = false,
+                renameProjectId = null,
+                renameProjectName = "",
+                renameProjectOriginalName = "",
+                renameError = null
+            )
+        }
+    }
+
+    /** 更新重命名对话框中的新名称输入 */
+    fun updateRenameProjectName(name: String) {
+        _uiState.update { it.copy(renameProjectName = name, renameError = null) }
+    }
+
+    /**
+     * 显示删除确认对话框
+     *
+     * @param project 待删除的项目
+     */
+    fun showDeleteConfirmDialog(project: Project) {
+        val projectId = project.id ?: return
+        _uiState.update {
+            it.copy(
+                showDeleteConfirmDialog = true,
+                deleteProjectId = projectId,
+                deleteProjectName = getProjectDisplayName(project)
+            )
+        }
+    }
+
+    /** 隐藏删除确认对话框 (删除进行中时不允许关闭) */
+    fun hideDeleteConfirmDialog() {
+        if (_uiState.value.isDeleting) return
+        _uiState.update {
+            it.copy(
+                showDeleteConfirmDialog = false,
+                deleteProjectId = null,
+                deleteProjectName = ""
+            )
+        }
+    }
+
+    /** 隐藏已归档项目底部 Sheet */
+    fun hideArchivedSheet() {
+        _uiState.update {
+            it.copy(
+                showArchivedSheet = false,
+                archivedProjects = emptyList()
+            )
+        }
+    }
+
+    /** 清除一次性提示消息 (Snackbar 展示后调用) */
+    fun clearSnackbarMessage() {
+        _uiState.update { it.copy(snackbarMessage = null) }
+    }
+
     // ==================== 辅助方法 ====================
+
+    /**
+     * 排序项目列表：星标项目排在前面，其余保持原有相对顺序
+     *
+     * Kotlin 的 sortedByDescending 使用稳定排序，因此未星标项目间的相对顺序不变。
+     *
+     * @param projects 原始项目列表
+     * @return 星标优先排序后的列表
+     */
+    private fun sortProjects(projects: List<Project>): List<Project> {
+        return projects.sortedByDescending { it.isStarred == true }
+    }
+
+    /**
+     * 在当前 Success 状态中变换项目列表 (用于乐观更新)
+     *
+     * 仅当当前处于 Success 状态时生效，其余状态保持不变。
+     *
+     * @param transform 列表变换函数
+     */
+    private fun updateProjectsInState(transform: (List<Project>) -> List<Project>) {
+        _uiState.update { state ->
+            val currentUiState = state.uiState
+            if (currentUiState is ProjectListUiState.Success) {
+                val newProjects = transform(currentUiState.projects)
+                state.copy(
+                    uiState = if (newProjects.isEmpty()) {
+                        ProjectListUiState.Empty
+                    } else {
+                        currentUiState.copy(projects = newProjects)
+                    }
+                )
+            } else {
+                state
+            }
+        }
+    }
+
+    /**
+     * 静默重新加载项目列表 (不显示加载/刷新指示器)
+     *
+     * 用于星标、重命名、归档、删除、恢复等操作后同步服务端最新状态。
+     * 加载失败时仅通过 snackbar 提示，不切换到 Error 状态 (避免打断用户操作)。
+     */
+    private fun reloadProjectsSilently() {
+        viewModelScope.launch {
+            try {
+                val api = NetworkModule.createCloudApiFromConfig() ?: return@launch
+                val projects = sortProjects(api.getProjects())
+                if (projects.isEmpty()) {
+                    _uiState.update { it.copy(uiState = ProjectListUiState.Empty) }
+                } else {
+                    _uiState.update { it.copy(uiState = ProjectListUiState.Success(projects)) }
+                }
+            } catch (e: Exception) {
+                // 静默刷新失败不打扰用户，仅在 snackbar 提示
+                _uiState.update { it.copy(snackbarMessage = "刷新列表失败: ${formatErrorMessage(e)}") }
+            }
+        }
+    }
+
+    /**
+     * 获取项目展示名称 (ViewModel 内部使用)
+     *
+     * 优先级：displayName (非空) > name (非空) > id > "未命名项目"
+     *
+     * @param project 项目数据
+     * @return 用于展示的项目名称
+     */
+    private fun getProjectDisplayName(project: Project): String {
+        return project.displayName?.takeIf { it.isNotBlank() }
+            ?: project.name.takeIf { it.isNotBlank() }
+            ?: project.id
+            ?: "未命名项目"
+    }
 
     /**
      * 格式化异常错误信息

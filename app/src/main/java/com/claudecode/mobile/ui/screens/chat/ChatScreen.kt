@@ -1,5 +1,9 @@
 package com.claudecode.mobile.ui.screens.chat
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -34,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -64,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -369,11 +375,15 @@ private fun UserMessageBubble(message: ChatUiMessage) {
  * - 工具调用: 显示工具名称和参数 (折叠样式)
  * - 思考过程: 灰色斜体，可折叠
  * - Markdown 风格文本: 支持加粗、行内代码、代码块
+ * - 复制按钮: 流式输出完成后在气泡底部显示，可复制消息文本
  *
  * @param message 助手消息
  */
 @Composable
 private fun AssistantMessageBubble(message: ChatUiMessage) {
+    // 获取 Context，用于剪贴板复制和 Toast 提示
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start
@@ -418,6 +428,29 @@ private fun AssistantMessageBubble(message: ChatUiMessage) {
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
+                    }
+
+                    // --- 复制按钮 (仅在非流式输出时显示) ---
+                    if (!message.isStreaming) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    copyTextToClipboard(context, message.content)
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ContentCopy,
+                                    contentDescription = "复制消息",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -964,4 +997,24 @@ private fun getModelDisplayName(modelId: String, models: List<ModelInfo>): Strin
 private fun getModelAbbreviation(modelId: String, models: List<ModelInfo>): String {
     val name = getModelDisplayName(modelId, models)
     return if (name.length > 16) name.take(16) + "…" else name
+}
+
+// ============================================================
+// 辅助函数: 剪贴板复制
+// ============================================================
+
+/**
+ * 复制文本到系统剪贴板并显示 Toast 提示
+ *
+ * 使用 Android 系统服务 ClipboardManager 将文本写入剪贴板，
+ * 复制完成后弹出 "已复制" 的 Toast 提示。
+ *
+ * @param context Android Context (用于获取系统服务和显示 Toast)
+ * @param text 待复制的文本内容
+ */
+private fun copyTextToClipboard(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = ClipData.newPlainText("AI 消息", text)
+    clipboard.setPrimaryClip(clip)
+    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
 }

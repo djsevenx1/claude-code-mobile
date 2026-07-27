@@ -57,12 +57,26 @@ sealed class SessionListUiState {
  * @param isRefreshing 是否正在下拉刷新
  * @param searchQuery 当前搜索关键词
  * @param isDeleting 是否正在删除会话
+ * @param showRenameDialog 是否显示重命名对话框
+ * @param renamingSessionId 当前正在重命名的会话标识 (nullable)
+ * @param renameText 重命名对话框中的输入文本
+ * @param showArchivedDialog 是否显示已归档会话列表对话框
+ * @param archivedSessions 已归档会话列表
+ * @param isLoadingArchived 是否正在加载已归档会话
+ * @param isProcessing 是否正在执行重命名/归档/恢复等操作 (用于禁用相关按钮)
  */
 data class SessionListScreenState(
     val uiState: SessionListUiState = SessionListUiState.Loading,
     val isRefreshing: Boolean = false,
     val searchQuery: String = "",
-    val isDeleting: Boolean = false
+    val isDeleting: Boolean = false,
+    val showRenameDialog: Boolean = false,
+    val renamingSessionId: String? = null,
+    val renameText: String = "",
+    val showArchivedDialog: Boolean = false,
+    val archivedSessions: List<Session> = emptyList(),
+    val isLoadingArchived: Boolean = false,
+    val isProcessing: Boolean = false
 )
 
 /**
@@ -77,6 +91,10 @@ data class SessionListScreenState(
  * 2. 下拉刷新会话列表
  * 3. 按标题搜索过滤会话
  * 4. 删除指定会话
+ * 5. 重命名指定会话
+ * 6. 归档指定会话 (软删除，force=false)
+ * 7. 加载已归档会话列表
+ * 8. 恢复已归档会话
  */
 class SessionListViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -238,6 +256,231 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: Exception) {
                 // 删除失败时保留当前列表，仅重置删除状态
                 _uiState.update { it.copy(isDeleting = false) }
+            }
+        }
+    }
+
+    // ==================== 重命名会话 ====================
+
+    /**
+     * 打开重命名对话框
+     *
+     * 将指定会话的当前标题预填到输入框，并设置重命名对话框的显示状态。
+     *
+     * @param session 待重命名的会话
+     */
+    fun showRenameDialog(session: Session) {
+        _uiState.update {
+            it.copy(
+                showRenameDialog = true,
+                renamingSessionId = session.id,
+                renameText = session.title?.takeIf { it.isNotBlank() }
+                    ?: session.summary?.takeIf { it.isNotBlank() }
+                    ?: ""
+            )
+        }
+    }
+
+    /**
+     * 更新重命名对话框中的输入文本
+     *
+     * @param text 新的输入文本
+     */
+    fun updateRenameText(text: String) {
+        _uiState.update { it.copy(renameText = text) }
+    }
+
+    /**
+     * 关闭重命名对话框并清空相关状态
+     */
+    fun dismissRenameDialog() {
+        _uiState.update {
+            it.copy(
+                showRenameDialog = false,
+                renamingSessionId = null,
+                renameText = ""
+            )
+        }
+    }
+
+    /**
+     * 提交重命名操作
+     *
+     * 调用 PUT /api/providers/sessions/{sessionId} 接口更新会话标题。
+     * 成功后刷新本地列表缓存并关闭对话框；失败时保留对话框以便重试。
+     *
+     * @param sessionId 待重命名的会话标识
+     * @param newTitle 新的会话标题
+     */
+    fun renameSession(sessionId: String, newTitle: String) {
+        val title = newTitle.trim()
+        if (title.isBlank()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.renameSession(sessionId, mapOf("title" to title))
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "重命名会话失败")
+                }
+
+                // 更新本地缓存中的会话标题，并重新应用搜索过滤
+                allSessions = allSessions.map { session ->
+                    if (session.id == sessionId) session.copy(title = title) else session
+                }
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        showRenameDialog = false,
+                        renamingSessionId = null,
+                        renameText = ""
+                    )
+                }
+                applySearchFilter()
+            } catch (e: Exception) {
+                // 重命名失败时保留对话框，仅重置处理状态
+                _uiState.update { it.copy(isProcessing = false) }
+            }
+        }
+    }
+
+    // ==================== 归档会话 ====================
+
+    /**
+     * 归档指定会话 (软删除)
+     *
+     * 调用 DELETE /api/providers/sessions/{sessionId}?force=false 接口。
+     * 与 [deleteSession] 的区别：归档后会话仍可通过 [restoreArchivedSession] 恢复。
+     * 成功后从本地活跃列表移除并刷新。
+     *
+     * @param sessionId 待归档的会话标识
+     */
+    fun archiveSession(sessionId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                // 复用 deleteSession 接口，force=false 表示归档而非永久删除
+                val response = api.deleteSession(sessionId, force = false)
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "归档会话失败")
+                }
+
+                // 从本地缓存中移除已归档的会话，并重新应用搜索过滤
+                allSessions = allSessions.filter { it.id != sessionId }
+                _uiState.update { it.copy(isProcessing = false) }
+                applySearchFilter()
+            } catch (e: Exception) {
+                // 归档失败时保留当前列表，仅重置处理状态
+                _uiState.update { it.copy(isProcessing = false) }
+            }
+        }
+    }
+
+    // ==================== 已归档会话 ====================
+
+    /**
+     * 打开已归档会话列表对话框并加载数据
+     */
+    fun showArchivedDialog() {
+        _uiState.update { it.copy(showArchivedDialog = true) }
+        loadArchivedSessions()
+    }
+
+    /**
+     * 关闭已归档会话列表对话框
+     */
+    fun dismissArchivedDialog() {
+        _uiState.update {
+            it.copy(
+                showArchivedDialog = false,
+                archivedSessions = emptyList()
+            )
+        }
+    }
+
+    /**
+     * 加载已归档会话列表
+     *
+     * 调用 GET /api/providers/sessions/archived 接口获取已归档会话。
+     * 响应为 { success, data: { sessions: [...] } } 包装格式。
+     */
+    fun loadArchivedSessions() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingArchived = true) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.getArchivedSessions()
+
+                if (!response.success) {
+                    throw RuntimeException("加载已归档会话失败")
+                }
+
+                val sessions = response.data?.sessions ?: emptyList()
+                _uiState.update {
+                    it.copy(
+                        isLoadingArchived = false,
+                        archivedSessions = sessions
+                    )
+                }
+            } catch (e: Exception) {
+                // 加载失败时清空列表，仅重置加载状态
+                _uiState.update {
+                    it.copy(
+                        isLoadingArchived = false,
+                        archivedSessions = emptyList()
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 恢复已归档会话
+     *
+     * 调用 POST /api/providers/sessions/{sessionId}/restore 接口。
+     * 成功后从已归档列表移除并刷新活跃会话列表。
+     *
+     * @param sessionId 待恢复的会话标识
+     */
+    fun restoreArchivedSession(sessionId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true) }
+
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址，请先登录")
+
+                val response = api.restoreSession(sessionId)
+
+                if (!response.success) {
+                    throw RuntimeException(response.error ?: "恢复会话失败")
+                }
+
+                // 从已归档列表中移除已恢复的会话
+                _uiState.update {
+                    it.copy(
+                        archivedSessions = it.archivedSessions.filter { s -> s.id != sessionId },
+                        isProcessing = false
+                    )
+                }
+                // 刷新活跃会话列表，使恢复的会话显示出来
+                refreshSessions()
+            } catch (e: Exception) {
+                // 恢复失败时保留列表，仅重置处理状态
+                _uiState.update { it.copy(isProcessing = false) }
             }
         }
     }

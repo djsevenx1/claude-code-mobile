@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -42,6 +41,8 @@ import com.claudecode.mobile.ui.screens.auth.LoginScreen
 import com.claudecode.mobile.ui.screens.auth.LoginViewModel
 import com.claudecode.mobile.ui.screens.chat.ChatScreen
 import com.claudecode.mobile.ui.screens.chat.ChatViewModel
+import com.claudecode.mobile.ui.screens.git.GitScreen
+import com.claudecode.mobile.ui.screens.git.GitViewModel
 import com.claudecode.mobile.ui.screens.projects.ProjectListScreen
 import com.claudecode.mobile.ui.screens.projects.ProjectListViewModel
 import com.claudecode.mobile.ui.screens.sessions.SessionListScreen
@@ -175,10 +176,22 @@ fun CloudNavGraph(
             )
         ) { backStackEntry ->
             val projectId = backStackEntry.arguments?.getString("projectId") ?: ""
-            PlaceholderScreen(
-                title = "Git 管理",
-                subtitle = "项目: $projectId",
-                icon = Icons.Filled.Code
+
+            // 获取 Application 上下文用于创建 GitViewModel
+            val context = LocalContext.current
+            val app = context.applicationContext as android.app.Application
+
+            // 使用工厂创建带参数的 GitViewModel
+            val gitViewModel: GitViewModel = viewModel(
+                factory = GitViewModel.provideFactory(
+                    application = app,
+                    projectId = projectId
+                )
+            )
+
+            GitScreen(
+                viewModel = gitViewModel,
+                onBack = { navController.popBackStack() }
             )
         }
     }
@@ -237,6 +250,9 @@ fun MainScreen(navController: NavHostController) {
                     onNavigateToSettings = {
                         // 设置已移至底部 Tab，直接切换到设置 Tab
                         selectedTab = 2
+                    },
+                    onNavigateToGit = { projectId ->
+                        navController.navigate(Routes.gitRoute(projectId))
                     }
                 )
                 // 对话 Tab: 显示会话列表

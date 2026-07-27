@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,17 +20,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +49,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +99,13 @@ fun SessionListScreen(
                     }
                 },
                 actions = {
+                    // 已归档会话入口按钮
+                    IconButton(onClick = viewModel::showArchivedDialog) {
+                        Icon(
+                            imageVector = Icons.Filled.Archive,
+                            contentDescription = "已归档会话"
+                        )
+                    }
                     // 刷新按钮
                     IconButton(onClick = viewModel::refreshSessions) {
                         Icon(
@@ -151,13 +168,18 @@ fun SessionListScreen(
                                     sessions = state.sessions,
                                     isRefreshing = uiState.isRefreshing,
                                     isDeleting = uiState.isDeleting,
+                                    isProcessing = uiState.isProcessing,
                                     onSessionClick = { session ->
                                         onNavigateToChat(
                                             session.getProjectIdSafe() ?: "",
                                             session.id
                                         )
                                     },
-                                    onDeleteSession = viewModel::deleteSession
+                                    onDeleteSession = viewModel::deleteSession,
+                                    onRenameSession = viewModel::showRenameDialog,
+                                    onArchiveSession = { sessionId ->
+                                        viewModel.archiveSession(sessionId)
+                                    }
                                 )
                             }
                         }
@@ -165,6 +187,32 @@ fun SessionListScreen(
                 }
             }
         }
+    }
+
+    // --- 重命名对话框 ---
+    if (uiState.showRenameDialog) {
+        RenameSessionDialog(
+            title = uiState.renameText,
+            onTitleChange = viewModel::updateRenameText,
+            onDismiss = viewModel::dismissRenameDialog,
+            onConfirm = {
+                uiState.renamingSessionId?.let { sessionId ->
+                    viewModel.renameSession(sessionId, uiState.renameText)
+                }
+            },
+            isProcessing = uiState.isProcessing
+        )
+    }
+
+    // --- 已归档会话列表对话框 ---
+    if (uiState.showArchivedDialog) {
+        ArchivedSessionsDialog(
+            sessions = uiState.archivedSessions,
+            isLoading = uiState.isLoadingArchived,
+            isProcessing = uiState.isProcessing,
+            onDismiss = viewModel::dismissArchivedDialog,
+            onRestore = viewModel::restoreArchivedSession
+        )
     }
 }
 
@@ -230,16 +278,22 @@ private fun SearchField(
  * @param sessions 会话列表
  * @param isRefreshing 是否正在刷新
  * @param isDeleting 是否正在删除会话
+ * @param isProcessing 是否正在执行重命名/归档/恢复等操作
  * @param onSessionClick 会话点击回调
  * @param onDeleteSession 删除会话回调
+ * @param onRenameSession 重命名会话回调 (参数: 会话对象)
+ * @param onArchiveSession 归档会话回调 (参数: 会话标识)
  */
 @Composable
 private fun SessionListContent(
     sessions: List<Session>,
     isRefreshing: Boolean,
     isDeleting: Boolean,
+    isProcessing: Boolean,
     onSessionClick: (Session) -> Unit,
-    onDeleteSession: (String) -> Unit
+    onDeleteSession: (String) -> Unit,
+    onRenameSession: (Session) -> Unit,
+    onArchiveSession: (String) -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -254,8 +308,11 @@ private fun SessionListContent(
                 SessionCard(
                     session = session,
                     isDeleting = isDeleting,
+                    isProcessing = isProcessing,
                     onClick = { onSessionClick(session) },
-                    onDelete = { onDeleteSession(session.id) }
+                    onDelete = { onDeleteSession(session.id) },
+                    onRename = { onRenameSession(session) },
+                    onArchive = { onArchiveSession(session.id) }
                 )
             }
         }
@@ -284,20 +341,28 @@ private fun SessionListContent(
 /**
  * 单个会话卡片
  *
- * 展示内容：终端图标 + 会话标题 + 相对时间 + 消息数 + 删除按钮
+ * 展示内容：终端图标 + 会话标题 + 相对时间 + 消息数 + 更多操作按钮 + 删除按钮
  * 点击卡片触发导航到聊天页
+ *
+ * 更多操作按钮 (三个点) 弹出下拉菜单，包含"重命名"和"归档"选项。
  *
  * @param session 会话数据
  * @param isDeleting 是否正在执行删除操作
+ * @param isProcessing 是否正在执行重命名/归档等操作 (用于禁用更多操作按钮)
  * @param onClick 卡片点击回调
  * @param onDelete 删除按钮点击回调
+ * @param onRename 重命名回调
+ * @param onArchive 归档回调
  */
 @Composable
 private fun SessionCard(
     session: Session,
     isDeleting: Boolean,
+    isProcessing: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onRename: () -> Unit,
+    onArchive: () -> Unit
 ) {
     Card(
         onClick = onClick,
@@ -374,6 +439,62 @@ private fun SessionCard(
             }
 
             Spacer(modifier = Modifier.width(8.dp))
+
+            // --- 更多操作按钮 (三个点) + 下拉菜单 ---
+            // 更多操作下拉菜单展开状态
+            var menuExpanded by remember { mutableStateOf(false) }
+
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    enabled = !isProcessing
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // 下拉菜单: 重命名 / 归档
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    // 重命名选项
+                    DropdownMenuItem(
+                        text = { Text("重命名") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Edit,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onRename()
+                        }
+                    )
+                    // 归档选项
+                    DropdownMenuItem(
+                        text = { Text("归档") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Archive,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onArchive()
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(4.dp))
 
             // 删除按钮
             IconButton(
@@ -568,4 +689,188 @@ private fun getSessionDisplayTitle(session: Session): String {
     return session.title?.takeIf { it.isNotBlank() }
         ?: session.summary?.takeIf { it.isNotBlank() }
         ?: "未命名会话"
+}
+
+// ============================================================
+// 子组件: 重命名对话框
+// ============================================================
+
+/**
+ * 会话重命名对话框
+ *
+ * 包含一个标题输入框 (OutlinedTextField)，确认后触发重命名回调。
+ * 处理中 (isProcessing = true) 时禁用确认按钮并显示加载指示器。
+ *
+ * @param title 当前输入的标题
+ * @param onTitleChange 标题变更回调
+ * @param onDismiss 取消/关闭回调
+ * @param onConfirm 确认重命名回调
+ * @param isProcessing 是否正在处理重命名请求
+ */
+@Composable
+private fun RenameSessionDialog(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    isProcessing: Boolean
+) {
+    AlertDialog(
+        onDismissRequest = {
+            // 处理中时不允许通过点击外部关闭
+            if (!isProcessing) onDismiss()
+        },
+        title = { Text("重命名会话") },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = onTitleChange,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("输入新的会话标题") },
+                singleLine = true,
+                enabled = !isProcessing
+            )
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isProcessing
+            ) {
+                Text("取消")
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = !isProcessing && title.isNotBlank()
+            ) {
+                if (isProcessing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("确定")
+                }
+            }
+        }
+    )
+}
+
+// ============================================================
+// 子组件: 已归档会话列表对话框
+// ============================================================
+
+/**
+ * 已归档会话列表对话框
+ *
+ * 展示已归档的会话列表，每项提供"恢复"按钮。
+ * 加载中 (isLoading = true) 时显示加载指示器。
+ *
+ * @param sessions 已归档会话列表
+ * @param isLoading 是否正在加载已归档会话
+ * @param isProcessing 是否正在执行恢复操作
+ * @param onDismiss 关闭对话框回调
+ * @param onRestore 恢复会话回调 (参数: 会话标识)
+ */
+@Composable
+private fun ArchivedSessionsDialog(
+    sessions: List<Session>,
+    isLoading: Boolean,
+    isProcessing: Boolean,
+    onDismiss: () -> Unit,
+    onRestore: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("已归档会话") },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 100.dp, max = 400.dp)
+            ) {
+                when {
+                    // 加载中状态
+                    isLoading -> {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(32.dp),
+                                    strokeWidth = 3.dp
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "正在加载...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    // 无已归档会话
+                    sessions.isEmpty() -> {
+                        Text(
+                            text = "暂无已归档会话",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp)
+                        )
+                    }
+                    // 已归档会话列表
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(
+                                items = sessions,
+                                key = { it.id }
+                            ) { session ->
+                                // 单条已归档会话项
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // 会话标题 (权重 1 占满剩余空间)
+                                    Text(
+                                        text = getSessionDisplayTitle(session),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    // 恢复按钮
+                                    TextButton(
+                                        onClick = { onRestore(session.id) },
+                                        enabled = !isProcessing,
+                                        contentPadding = PaddingValues(
+                                            horizontal = 8.dp,
+                                            vertical = 0.dp
+                                        )
+                                    ) {
+                                        Text("恢复")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
 }

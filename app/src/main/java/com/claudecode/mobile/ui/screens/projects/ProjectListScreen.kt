@@ -19,35 +19,53 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,10 +98,21 @@ fun ProjectListScreen(
     viewModel: ProjectListViewModel,
     onNavigateToChat: (projectId: String, sessionId: String) -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToGit: (projectId: String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // 收集 UI 状态 (跟随生命周期感知)
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Snackbar 宿主状态 (用于展示星标/删除/归档/恢复等操作结果提示)
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // 一次性提示消息：当 snackbarMessage 变化时展示 Snackbar，展示后清空
+    LaunchedEffect(uiState.snackbarMessage) {
+        val message = uiState.snackbarMessage ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+        viewModel.clearSnackbarMessage()
+    }
 
     // 收集导航事件 (一次性事件，通过 Channel 承载)
     LaunchedEffect(Unit) {
@@ -104,11 +133,57 @@ fun ProjectListScreen(
         )
     }
 
+    // 重命名项目对话框
+    if (uiState.showRenameDialog) {
+        RenameProjectDialog(
+            state = uiState,
+            onNameChange = viewModel::updateRenameProjectName,
+            onDismiss = viewModel::hideRenameDialog,
+            onRename = {
+                val projectId = uiState.renameProjectId
+                if (!projectId.isNullOrBlank()) {
+                    viewModel.renameProject(projectId, uiState.renameProjectName)
+                }
+            }
+        )
+    }
+
+    // 删除项目确认对话框
+    if (uiState.showDeleteConfirmDialog) {
+        DeleteConfirmDialog(
+            state = uiState,
+            onDismiss = viewModel::hideDeleteConfirmDialog,
+            onDelete = {
+                val projectId = uiState.deleteProjectId
+                if (!projectId.isNullOrBlank()) {
+                    viewModel.deleteProject(projectId)
+                }
+            }
+        )
+    }
+
+    // 已归档项目列表底部 Sheet
+    if (uiState.showArchivedSheet) {
+        ArchivedProjectsSheet(
+            state = uiState,
+            onDismiss = viewModel::hideArchivedSheet,
+            onRestore = { project -> project.id?.let { viewModel.restoreArchivedProject(it) } }
+        )
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("项目列表") },
                 actions = {
+                    // 查看已归档项目
+                    IconButton(onClick = viewModel::loadArchivedProjects) {
+                        Icon(
+                            imageVector = Icons.Filled.Archive,
+                            contentDescription = "已归档项目"
+                        )
+                    }
                     // 刷新按钮
                     IconButton(onClick = viewModel::refreshProjects) {
                         Icon(
@@ -183,6 +258,17 @@ fun ProjectListScreen(
                             isRefreshing = uiState.isRefreshing,
                             onRefresh = viewModel::refreshProjects,
                             onProjectClick = viewModel::onProjectClicked,
+                            onToggleStar = { project ->
+                                project.id?.let { viewModel.toggleStar(it) }
+                            },
+                            onRename = viewModel::showRenameDialog,
+                            onArchive = { project ->
+                                project.id?.let { viewModel.archiveProject(it) }
+                            },
+                            onDelete = viewModel::showDeleteConfirmDialog,
+                            onNavigateToGit = { project ->
+                                project.id?.let { onNavigateToGit(it) }
+                            },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -270,6 +356,10 @@ private fun ProjectSearchBar(
  * @param isRefreshing 是否正在刷新
  * @param onRefresh 下拉刷新回调
  * @param onProjectClick 项目点击回调
+ * @param onToggleStar 切换星标回调
+ * @param onRename 重命名项目回调
+ * @param onArchive 归档项目回调
+ * @param onDelete 删除项目回调 (弹出确认对话框)
  * @param modifier 修饰符
  */
 @Composable
@@ -279,6 +369,11 @@ private fun ProjectListContent(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onProjectClick: (Project) -> Unit,
+    onToggleStar: (Project) -> Unit,
+    onRename: (Project) -> Unit,
+    onArchive: (Project) -> Unit,
+    onDelete: (Project) -> Unit,
+    onNavigateToGit: (Project) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -324,7 +419,12 @@ private fun ProjectListContent(
                 ) { project ->
                     ProjectCard(
                         project = project,
-                        onClick = { onProjectClick(project) }
+                        onClick = { onProjectClick(project) },
+                        onToggleStar = onToggleStar,
+                        onRename = onRename,
+                        onArchive = onArchive,
+                        onDelete = onDelete,
+                        onNavigateToGit = onNavigateToGit
                     )
                 }
             }
@@ -354,17 +454,33 @@ private fun ProjectListContent(
 /**
  * 单个项目卡片
  *
- * 展示内容：项目名称、路径、最后修改时间、会话数、Git 标识
- * 点击后触发导航到聊天页
+ * 展示内容：项目名称、路径、最后修改时间、会话数、Git 标识、星标状态
+ * 点击卡片主体触发导航到聊天页；右上角提供星标快捷按钮与更多操作菜单
+ * (重命名、星标/取消星标、归档、删除)。
  *
  * @param project 项目数据
- * @param onClick 点击回调
+ * @param onClick 卡片点击回调 (进入聊天页)
+ * @param onToggleStar 切换星标回调
+ * @param onRename 重命名项目回调
+ * @param onArchive 归档项目回调
+ * @param onDelete 删除项目回调 (弹出确认对话框)
+ * @param onNavigateToGit 导航到 Git 管理页面回调
  */
 @Composable
 private fun ProjectCard(
     project: Project,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onToggleStar: (Project) -> Unit,
+    onRename: (Project) -> Unit,
+    onArchive: (Project) -> Unit,
+    onDelete: (Project) -> Unit,
+    onNavigateToGit: (Project) -> Unit
 ) {
+    // 是否已星标
+    val isStarred = project.isStarred == true
+    // 更多操作菜单展开状态 (每个卡片独立维护)
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -397,15 +513,116 @@ private fun ProjectCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                // 星标快捷按钮 (已星标显示金色实心星星，未星标显示空心星星)
+                IconButton(
+                    onClick = { onToggleStar(project) },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                        contentDescription = if (isStarred) "取消星标" else "星标",
+                        tint = if (isStarred) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 // Git 仓库标识
                 if (project.hasGit == true) {
-                    Spacer(modifier = Modifier.width(8.dp))
                     Icon(
                         imageVector = Icons.Filled.Code,
                         contentDescription = "Git 仓库",
                         tint = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.size(18.dp)
                     )
+                }
+                // 更多操作菜单 (重命名、星标/取消星标、归档、删除)
+                Box {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "更多操作",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        // 重命名
+                        DropdownMenuItem(
+                            text = { Text("重命名") },
+                            onClick = {
+                                menuExpanded = false
+                                onRename(project)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Edit,
+                                    contentDescription = null
+                                )
+                            }
+                        )
+                        // 星标 / 取消星标
+                        DropdownMenuItem(
+                            text = { Text(if (isStarred) "取消星标" else "星标") },
+                            onClick = {
+                                menuExpanded = false
+                                onToggleStar(project)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                    contentDescription = null
+                                )
+                            }
+                        )
+                        // 归档
+                        DropdownMenuItem(
+                            text = { Text("归档") },
+                            onClick = {
+                                menuExpanded = false
+                                onArchive(project)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Archive,
+                                    contentDescription = null
+                                )
+                            }
+                        )
+                        // Git 管理
+                        DropdownMenuItem(
+                            text = { Text("Git 管理") },
+                            onClick = {
+                                menuExpanded = false
+                                onNavigateToGit(project)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Code,
+                                    contentDescription = null
+                                )
+                            }
+                        )
+                        // 删除
+                        DropdownMenuItem(
+                            text = { Text("删除") },
+                            onClick = {
+                                menuExpanded = false
+                                onDelete(project)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        )
+                    }
                 }
             }
 
@@ -774,6 +991,318 @@ private fun CreateProjectDialog(
             }
         }
     )
+}
+
+// ============================================================
+// 子组件: 重命名项目对话框
+// ============================================================
+
+/**
+ * 重命名项目对话框
+ *
+ * 预填当前项目名称，用户输入新名称后提交。
+ * 重命名过程中禁用输入与按钮，展示加载指示器。
+ *
+ * @param state 页面状态 (读取重命名表单字段与状态)
+ * @param onNameChange 新名称变更回调
+ * @param onDismiss 关闭对话框回调
+ * @param onRename 提交重命名回调
+ */
+@Composable
+private fun RenameProjectDialog(
+    state: ProjectListScreenState,
+    onNameChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {
+            // 重命名过程中不允许点击外部关闭
+            if (!state.isRenaming) onDismiss()
+        },
+        title = { Text("重命名项目") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 原始名称提示
+                if (state.renameProjectOriginalName.isNotBlank()) {
+                    Text(
+                        text = "当前名称: ${state.renameProjectOriginalName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // 新名称输入框
+                OutlinedTextField(
+                    value = state.renameProjectName,
+                    onValueChange = onNameChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("新名称 *") },
+                    placeholder = { Text("请输入新的项目名称") },
+                    singleLine = true,
+                    enabled = !state.isRenaming,
+                    isError = state.renameError != null,
+                    shape = RoundedCornerShape(8.dp)
+                )
+                // 错误信息展示
+                if (state.renameError != null) {
+                    Text(
+                        text = state.renameError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onRename,
+                enabled = !state.isRenaming && state.renameProjectName.isNotBlank()
+            ) {
+                if (state.isRenaming) {
+                    // 重命名中: 显示进度指示器
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("确定")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !state.isRenaming
+            ) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+// ============================================================
+// 子组件: 删除项目确认对话框
+// ============================================================
+
+/**
+ * 删除项目确认对话框
+ *
+ * 展示待删除项目名称，需用户二次确认后才会执行删除。
+ * 删除过程中禁用按钮，展示加载指示器。
+ *
+ * @param state 页面状态 (读取待删除项目信息与状态)
+ * @param onDismiss 关闭对话框回调
+ * @param onDelete 确认删除回调
+ */
+@Composable
+private fun DeleteConfirmDialog(
+    state: ProjectListScreenState,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {
+            // 删除过程中不允许点击外部关闭
+            if (!state.isDeleting) onDismiss()
+        },
+        title = { Text("删除项目") },
+        text = {
+            Text(
+                text = "确定要删除项目 \"${state.deleteProjectName}\" 吗？\n此操作将移除该项目及其关联数据，且不可撤销。",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDelete,
+                enabled = !state.isDeleting
+            ) {
+                if (state.isDeleting) {
+                    // 删除中: 显示进度指示器
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !state.isDeleting
+            ) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+// ============================================================
+// 子组件: 已归档项目底部 Sheet
+// ============================================================
+
+/**
+ * 已归档项目列表底部 Sheet
+ *
+ * 展示通过 GET /api/projects/archived 获取的已归档项目，
+ * 支持单个恢复操作 (POST /api/projects/{projectId}/restore)。
+ *
+ * @param state 页面状态 (读取已归档项目列表与加载状态)
+ * @param onDismiss 关闭 Sheet 回调
+ * @param onRestore 恢复项目回调
+ */
+@Composable
+private fun ArchivedProjectsSheet(
+    state: ProjectListScreenState,
+    onDismiss: () -> Unit,
+    onRestore: (Project) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        // Sheet 标题
+        Text(
+            text = "已归档项目",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+        )
+
+        when {
+            // 加载中
+            state.isLoadingArchived -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 3.dp
+                    )
+                }
+            }
+            // 归档列表为空
+            state.archivedProjects.isEmpty() -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Archive,
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp),
+                        tint = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = "暂无已归档项目",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            // 已归档项目列表
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(
+                        items = state.archivedProjects,
+                        key = { project -> project.id ?: project.name }
+                    ) { project ->
+                        ArchivedProjectItem(
+                            project = project,
+                            isRestoring = state.isRestoring,
+                            onRestore = { onRestore(project) }
+                        )
+                    }
+                    // 底部留白
+                    item { Spacer(modifier = Modifier.height(16.dp)) }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 已归档项目列表项
+ *
+ * @param project 已归档项目数据
+ * @param isRestoring 是否正在恢复中
+ * @param onRestore 恢复回调
+ */
+@Composable
+private fun ArchivedProjectItem(
+    project: Project,
+    isRestoring: Boolean,
+    onRestore: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Archive,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = getProjectDisplayName(project),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (project.path.isNotBlank()) {
+                    Text(
+                        text = project.path,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            // 恢复按钮
+            TextButton(
+                onClick = onRestore,
+                enabled = !isRestoring
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Unarchive,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("恢复")
+            }
+        }
+    }
 }
 
 // ============================================================
