@@ -420,7 +420,7 @@ class CloudWebSocketClient(
             parsed
         } catch (e: Exception) {
             // 无法按标准帧解析时，包装为未知类型帧
-            CloudFrame(kind = "unknown", raw = text)
+            CloudFrame(kind = "unknown").apply { raw = text }
         }
 
         // 推送到 Flow（使用 tryEmit，因 extraBufferCapacity 已配置）

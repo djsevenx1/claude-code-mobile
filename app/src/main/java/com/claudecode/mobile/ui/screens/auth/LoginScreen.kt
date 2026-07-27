@@ -30,7 +30,7 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Server
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Terminal
@@ -278,7 +278,7 @@ private fun LoginContent(
                         Spacer(modifier = Modifier.height(8.dp))
                         TextButton(onClick = onToggleServerField) {
                             Icon(
-                                imageVector = Icons.Filled.Server,
+                                imageVector = Icons.Filled.Dns,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -421,7 +421,7 @@ private fun ServerUrlField(
             label = { Text("服务器地址") },
             placeholder = { Text("https://cloudcli.ai", fontSize = 14.sp) },
             leadingIcon = {
-                Icon(Icons.Filled.Server, contentDescription = null)
+                Icon(Icons.Filled.Dns, contentDescription = null)
             },
             trailingIcon = {
                 // 服务器健康状态指示器
