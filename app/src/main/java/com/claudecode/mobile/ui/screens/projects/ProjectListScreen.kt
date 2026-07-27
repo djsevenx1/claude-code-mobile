@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -41,7 +42,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -107,6 +107,13 @@ fun ProjectListScreen(
             TopAppBar(
                 title = { Text("项目列表") },
                 actions = {
+                    // 刷新按钮
+                    IconButton(onClick = viewModel::refreshProjects) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "刷新"
+                        )
+                    }
                     // 设置按钮
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(
@@ -197,13 +204,7 @@ private fun ProjectListContent(
     onRefresh: () -> Unit,
     onProjectClick: (Project) -> Unit
 ) {
-    // PullToRefreshBox 是 SwipeRefreshLayout 的 Compose 替代方案
-    // 内部使用下拉手势 + 圆形进度指示器 (CircularProgressIndicator)
-    PullToRefreshBox(
-        isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -216,6 +217,21 @@ private fun ProjectListContent(
                 ProjectCard(
                     project = project,
                     onClick = { onProjectClick(project) }
+                )
+            }
+        }
+
+        // 刷新中遮罩
+        if (isRefreshing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 3.dp
                 )
             }
         }
