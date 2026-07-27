@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /**
  * 认证相关数据传输对象 (DTO)
  *
- * 对应 CloudCLI 服务端 /api/auth/* 系列接口的请求与响应结构。
+ * 对应 CloudCLI 服务端 /api/auth/ 系列接口的请求与响应结构。
  */
 
 /**

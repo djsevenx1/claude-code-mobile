@@ -181,7 +181,7 @@ sealed class ConnectionState {
  * ```kotlin
  * val client = CloudWebSocketClient(okHttpClient, json)
  * client.connect("https://cloudcli.ai", "jwt_token")
- * client.messageFlow.collect { frame -> /* 处理帧 */ }
+ * client.messageFlow.collect { frame -> // 处理帧
  * client.send(ChatMessage(command = "hello", cwd = "/path"))
  * ```
  *

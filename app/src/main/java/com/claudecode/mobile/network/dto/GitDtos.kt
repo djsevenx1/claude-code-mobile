@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /**
  * Git 相关数据传输对象 (DTO)
  *
- * 对应 CloudCLI 服务端 /api/git/* 系列接口。
+ * 对应 CloudCLI 服务端 /api/git/ 系列接口。
  */
 
 /**
