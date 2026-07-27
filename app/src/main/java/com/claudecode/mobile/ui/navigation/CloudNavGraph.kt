@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -33,6 +32,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.claudecode.mobile.ui.screens.auth.LoginScreen
 import com.claudecode.mobile.ui.screens.auth.LoginViewModel
+import com.claudecode.mobile.ui.screens.chat.ChatScreen
+import com.claudecode.mobile.ui.screens.chat.ChatViewModel
+import com.claudecode.mobile.ui.screens.projects.ProjectListScreen
+import com.claudecode.mobile.ui.screens.projects.ProjectListViewModel
 
 // ============================================================
 // CloudCLI 导航图
@@ -116,16 +119,20 @@ fun CloudNavGraph(
             )
         }
 
-        // --- 项目列表页面 ---
+        // --- 项目列表页面 (已实现) ---
         composable(Routes.PROJECTS) {
-            PlaceholderScreen(
-                title = "项目列表",
-                subtitle = "选择或管理您的代码项目",
-                icon = Icons.Filled.Folder
+            ProjectListScreen(
+                viewModel = viewModel(),
+                onNavigateToChat = { projectId, sessionId ->
+                    navController.navigate(Routes.chatRoute(projectId, sessionId))
+                },
+                onNavigateToSettings = {
+                    navController.navigate(Routes.SETTINGS)
+                }
             )
         }
 
-        // --- 聊天页面 (带项目ID和会话ID参数) ---
+        // --- 聊天页面 (已实现, 带项目ID和会话ID参数) ---
         composable(
             route = Routes.CHAT,
             arguments = listOf(
@@ -135,10 +142,23 @@ fun CloudNavGraph(
         ) { backStackEntry ->
             val projectId = backStackEntry.arguments?.getString("projectId") ?: ""
             val sessionId = backStackEntry.arguments?.getString("sessionId") ?: ""
-            PlaceholderScreen(
-                title = "对话",
-                subtitle = "项目: $projectId | 会话: $sessionId",
-                icon = Icons.Filled.Chat
+
+            // 获取 Application 上下文用于创建 ChatViewModel
+            val context = LocalContext.current
+            val app = context.applicationContext as android.app.Application
+
+            // 使用工厂创建带参数的 ChatViewModel
+            val chatViewModel: ChatViewModel = viewModel(
+                factory = ChatViewModel.provideFactory(
+                    application = app,
+                    projectId = projectId,
+                    sessionId = sessionId
+                )
+            )
+
+            ChatScreen(
+                viewModel = chatViewModel,
+                onBack = { navController.popBackStack() }
             )
         }
 
