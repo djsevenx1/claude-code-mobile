@@ -20,11 +20,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -38,6 +40,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.claudecode.mobile.network.dto.Project
 import com.claudecode.mobile.network.dto.Session
 
 // ============================================================
@@ -115,6 +119,19 @@ fun SessionListScreen(
                     }
                 }
             )
+        },
+        floatingActionButton = {
+            // 新建对话按钮
+            FloatingActionButton(
+                onClick = viewModel::showNewSessionDialog,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = "新建对话"
+                )
+            }
         }
     ) { innerPadding ->
         Box(
@@ -212,6 +229,19 @@ fun SessionListScreen(
             isProcessing = uiState.isProcessing,
             onDismiss = viewModel::dismissArchivedDialog,
             onRestore = viewModel::restoreArchivedSession
+        )
+    }
+
+    // --- 新建对话 (选择项目) 对话框 ---
+    if (uiState.showNewSessionDialog) {
+        NewSessionDialog(
+            projects = uiState.availableProjects,
+            isLoading = uiState.isLoadingProjects,
+            onDismiss = viewModel::dismissNewSessionDialog,
+            onSelectProject = { project ->
+                viewModel.dismissNewSessionDialog()
+                onNavigateToChat(project.id ?: "", "")
+            }
         )
     }
 }
@@ -870,6 +900,141 @@ private fun ArchivedSessionsDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("关闭")
+            }
+        }
+    )
+}
+
+// ============================================================
+// 子组件: 新建对话 (选择项目) 对话框
+// ============================================================
+
+/**
+ * 新建对话对话框
+ *
+ * 展示可选的项目列表，用户选择项目后导航到聊天页 (sessionId 为空)。
+ * 加载中时显示加载指示器。
+ *
+ * @param projects 可选的项目列表
+ * @param isLoading 是否正在加载项目列表
+ * @param onDismiss 关闭对话框回调
+ * @param onSelectProject 选择项目回调
+ */
+@Composable
+private fun NewSessionDialog(
+    projects: List<Project>,
+    isLoading: Boolean,
+    onDismiss: () -> Unit,
+    onSelectProject: (Project) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新建对话") },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 100.dp, max = 400.dp)
+            ) {
+                when {
+                    // 加载中状态
+                    isLoading -> {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(32.dp),
+                                    strokeWidth = 3.dp
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "正在加载项目列表...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    // 无可用项目
+                    projects.isEmpty() -> {
+                        Text(
+                            text = "暂无可用项目，请先创建项目",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp)
+                        )
+                    }
+                    // 项目列表
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            items(
+                                items = projects,
+                                key = { it.id ?: it.name }
+                            ) { project ->
+                                // 单个项目项 (可点击)
+                                Card(
+                                    onClick = { onSelectProject(project) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Folder,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = project.displayName?.takeIf { it.isNotBlank() }
+                                                    ?: project.name.takeIf { it.isNotBlank() }
+                                                    ?: project.id
+                                                    ?: "未命名项目",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (project.path.isNotBlank()) {
+                                                Text(
+                                                    text = project.path,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.outline,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
             }
         }
     )

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudecode.mobile.network.NetworkModule
+import com.claudecode.mobile.network.dto.Project
 import com.claudecode.mobile.network.dto.Session
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,7 +77,13 @@ data class SessionListScreenState(
     val showArchivedDialog: Boolean = false,
     val archivedSessions: List<Session> = emptyList(),
     val isLoadingArchived: Boolean = false,
-    val isProcessing: Boolean = false
+    val isProcessing: Boolean = false,
+    /** 是否显示新建对话的项目选择对话框 */
+    val showNewSessionDialog: Boolean = false,
+    /** 可选的项目列表 (新建对话时选择) */
+    val availableProjects: List<Project> = emptyList(),
+    /** 是否正在加载项目列表 */
+    val isLoadingProjects: Boolean = false
 )
 
 /**
@@ -128,8 +135,17 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                     ?: throw RuntimeException("未配置服务器地址，请先登录")
 
                 val projects = api.getProjects()
-                val sessions = projects.flatMap { it.sessions ?: emptyList() }
-                    .sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
+                // 从项目内嵌 sessions 提取会话，并确保每个 session 携带所属项目的 ID
+                // (服务端在内嵌 sessions 中可能不包含 project_id 字段)
+                val sessions = projects.flatMap { project ->
+                    (project.sessions ?: emptyList()).map { session ->
+                        if (session.getProjectIdSafe() == null) {
+                            session.copy(projectId = project.id)
+                        } else {
+                            session
+                        }
+                    }
+                }.sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
                 allSessions = sessions
                 applySearchFilter()
             } catch (e: Exception) {
@@ -155,8 +171,15 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                     ?: throw RuntimeException("未配置服务器地址")
 
                 val projects = api.getProjects()
-                val sessions = projects.flatMap { it.sessions ?: emptyList() }
-                    .sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
+                val sessions = projects.flatMap { project ->
+                    (project.sessions ?: emptyList()).map { session ->
+                        if (session.getProjectIdSafe() == null) {
+                            session.copy(projectId = project.id)
+                        } else {
+                            session
+                        }
+                    }
+                }.sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
                 allSessions = sessions
                 _uiState.update { it.copy(isRefreshing = false) }
                 applySearchFilter()
@@ -481,6 +504,47 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: Exception) {
                 // 恢复失败时保留列表，仅重置处理状态
                 _uiState.update { it.copy(isProcessing = false) }
+            }
+        }
+    }
+
+    // ==================== 新建对话 ====================
+
+    /**
+     * 打开新建对话对话框并加载项目列表
+     *
+     * 新建对话需要先选择一个项目，然后导航到聊天页 (sessionId 为空)。
+     */
+    fun showNewSessionDialog() {
+        _uiState.update { it.copy(showNewSessionDialog = true, isLoadingProjects = true) }
+        loadAvailableProjects()
+    }
+
+    /**
+     * 关闭新建对话对话框
+     */
+    fun dismissNewSessionDialog() {
+        _uiState.update {
+            it.copy(showNewSessionDialog = false, availableProjects = emptyList())
+        }
+    }
+
+    /**
+     * 加载可选项目列表 (新建对话时使用)
+     */
+    private fun loadAvailableProjects() {
+        viewModelScope.launch {
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址")
+                val projects = api.getProjects()
+                _uiState.update {
+                    it.copy(availableProjects = projects, isLoadingProjects = false)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isLoadingProjects = false)
+                }
             }
         }
     }
