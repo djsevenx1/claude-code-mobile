@@ -259,6 +259,15 @@ class MainActivity : AppCompatActivity() {
         errorText.text = message
     }
 
+    private fun showError(title: String, message: String) {
+        swipeRefresh.isRefreshing = false
+        progressBar.visibility = View.GONE
+        webView.visibility = View.GONE
+        errorView.visibility = View.VISIBLE
+        binding.toolbar.title = title
+        errorText.text = message
+    }
+
     private fun showServerPicker() {
         val servers = serverRepo.getAll()
         if (servers.isEmpty()) {
