@@ -63,22 +63,99 @@ data class ChatOptions(
 )
 
 /**
- * 发送给服务端的聊天消息
+ * 发送给服务端的聊天消息（chat.send）
  *
- * 通过 WebSocket 发送，触发一次 Claude 对话。
+ * 通过 WebSocket 发送，触发一次 AI 对话。
+ * 严格对应 claudecodeui WebSocket /ws 端点的 chat.send 协议。
  *
- * @param command 用户输入的提示词/命令
- * @param sessionId 会话标识（延续已有会话时传入，新建会话传 null）
- * @param cwd 当前工作目录（项目路径）
- * @param options 执行选项（模型、工具等）
+ * @param type 消息类型，固定为 "chat.send"
+ * @param sessionId 会话标识（由 POST /api/providers/sessions 创建）
+ * @param message 用户输入的提示词/命令
+ * @param projectPath 项目路径（服务器上的绝对路径）
+ * @param model 模型标识
+ * @param provider AI 提供商
+ * @param systemPrompt 自定义系统提示词
+ * @param maxTurns 最大轮次
+ * @param allowedTools 允许使用的工具
+ * @param autoApproveTools 自动批准工具
  */
 @Serializable
 data class ChatMessage(
-    val command: String,
-    @SerialName("session_id")
+    val type: String = "chat.send",
+    @SerialName("sessionId")
     val sessionId: String? = null,
-    val cwd: String? = null,
-    val options: ChatOptions = ChatOptions()
+    val message: String,
+    @SerialName("projectPath")
+    val projectPath: String? = null,
+    val model: String? = null,
+    val provider: String? = null,
+    @SerialName("systemPrompt")
+    val systemPrompt: String? = null,
+    @SerialName("maxTurns")
+    val maxTurns: Int? = null,
+    @SerialName("allowedTools")
+    val allowedTools: List<String>? = null,
+    @SerialName("autoApproveTools")
+    val autoApproveTools: Boolean? = null
+)
+
+/**
+ * chat.abort 消息 - 中止当前正在运行的会话
+ *
+ * @param type 消息类型，固定为 "chat.abort"
+ * @param sessionId 会话标识
+ */
+@Serializable
+data class ChatAbortMessage(
+    val type: String = "chat.abort",
+    @SerialName("sessionId")
+    val sessionId: String
+)
+
+/**
+ * chat.subscribe 消息中的会话订阅项
+ *
+ * @param sessionId 会话标识
+ * @param lastSeq 上次收到的最大事件序号
+ */
+@Serializable
+data class SessionSubscription(
+    @SerialName("sessionId")
+    val sessionId: String,
+    @SerialName("lastSeq")
+    val lastSeq: Int = 0
+)
+
+/**
+ * chat.subscribe 消息 - 订阅会话实时事件流
+ *
+ * 用于断线重连后重放丢失的事件。
+ *
+ * @param type 消息类型，固定为 "chat.subscribe"
+ * @param sessions 要订阅的会话列表
+ */
+@Serializable
+data class ChatSubscribeMessage(
+    val type: String = "chat.subscribe",
+    val sessions: List<SessionSubscription>
+)
+
+/**
+ * chat.permission-response 消息 - 响应工具审批请求
+ *
+ * @param type 消息类型，固定为 "chat.permission-response"
+ * @param sessionId 会话标识
+ * @param permissionId 权限请求标识
+ * @param approved 是否批准
+ */
+@Serializable
+data class ChatPermissionResponse(
+    val type: String = "chat.permission-response",
+    @SerialName("sessionId")
+    val sessionId: String,
+    @SerialName("permissionId")
+    val permissionId: String,
+    val approved: Boolean
 )
 
 /**
@@ -90,29 +167,44 @@ data class ChatMessage(
  * @param kind 帧类型（见 [FrameKind]）
  * @param data 帧数据负载（JSON 对象）
  * @param sessionId 关联会话标识（可选）
+ * @param seq 事件序号（单调递增，用于断线重连重放）
  * @param timestamp 时间戳（可选，ISO 8601 字符串）
- * @param raw 原始 JSON 文本
  */
 @Serializable
 data class CloudFrame(
     val kind: String = "",
     val data: JsonElement? = null,
-    @SerialName("session_id")
+    @SerialName("sessionId")
     val sessionId: String? = null,
+    @SerialName("session_id")
+    val sessionIdAlt: String? = null,
+    val seq: Int? = null,
     val timestamp: String? = null
 ) {
     /** 原始 JSON 文本，由解析时注入（不参与序列化） */
     @kotlinx.serialization.Transient
     var raw: String = ""
+
+    /** 统一获取 sessionId（兼容不同字段名） */
+    fun getSessionIdSafe(): String? = sessionId ?: sessionIdAlt
 }
 
 /**
  * 消息帧类型枚举
  *
  * 涵盖 CloudCLI WebSocket 标准帧格式的主要类型。
+ * 对应 claudecodeui 服务端 NormalizedMessage 和协议帧。
  */
 object FrameKind {
-    /** 助手文本输出（流式增量） */
+    // --- NormalizedMessage 种类 (AI 输出) ---
+
+    /** 用户消息 */
+    const val USER = "user"
+
+    /** 助手文本输出 */
+    const val ASSISTANT = "assistant"
+
+    /** 助手文本输出（兼容旧格式） */
     const val ASSISTANT_TEXT = "assistant_text"
 
     /** 工具调用请求 */
@@ -121,26 +213,46 @@ object FrameKind {
     /** 工具执行结果 */
     const val TOOL_RESULT = "tool_result"
 
-    /** 错误信息 */
-    const val ERROR = "error"
+    /** 思考过程（扩展思考） */
+    const val THINKING = "thinking"
 
     /** Token 用量统计 */
     const val TOKEN_USAGE = "token_usage"
 
-    /** 会话信息（会话创建/更新，携带 sessionId 等） */
+    // --- 协议帧类型 ---
+
+    /** 订阅确认（携带 isProcessing 和 pendingPermissions） */
+    const val CHAT_SUBSCRIBED = "chat_subscribed"
+
+    /** 会话更新增量 */
+    const val SESSION_UPSERTED = "session_upserted"
+
+    /** 项目快照构建进度 */
+    const val LOADING_PROGRESS = "loading_progress"
+
+    /** 运行结束（携带 exitCode, success, aborted） */
+    const val COMPLETE = "complete"
+
+    /** 协议错误 */
+    const val PROTOCOL_ERROR = "protocol_error"
+
+    /** 错误信息（兼容旧格式） */
+    const val ERROR = "error"
+
+    /** 会话信息（兼容旧格式） */
     const val SESSION_INFO = "session_info"
 
-    /** 用户消息回显 */
+    /** 用户消息回显（兼容旧格式） */
     const val USER_MESSAGE = "user_message"
 
-    /** 思考过程（扩展思考） */
-    const val THINKING = "thinking"
-
-    /** 流结束标记 */
+    /** 流结束标记（兼容旧格式） */
     const val DONE = "done"
 
     /** 连接确认 */
     const val CONNECTED = "connected"
+
+    /** 工具审批请求 */
+    const val PERMISSION_REQUEST = "permission_request"
 }
 
 /**
@@ -182,7 +294,7 @@ sealed class ConnectionState {
  * val client = CloudWebSocketClient(okHttpClient, json)
  * client.connect("https://cloudcli.ai", "jwt_token")
  * client.messageFlow.collect { frame -> // 处理帧
- * client.send(ChatMessage(command = "hello", cwd = "/path"))
+ * client.send(ChatMessage(sessionId = "xxx", message = "hello", projectPath = "/path"))
  * ```
  *
  * @param okHttpClient 共享的 OkHttp 客户端实例
@@ -324,7 +436,7 @@ class CloudWebSocketClient(
     }
 
     /**
-     * 发送聊天消息
+     * 发送聊天消息 (chat.send)
      *
      * @param message 聊天消息
      * @return true 表示消息已入队发送，false 表示连接未建立
@@ -332,6 +444,50 @@ class CloudWebSocketClient(
     fun send(message: ChatMessage): Boolean {
         val ws = webSocket ?: return false
         val jsonStr = json.encodeToString(ChatMessage.serializer(), message)
+        return ws.send(jsonStr)
+    }
+
+    /**
+     * 中止当前会话 (chat.abort)
+     *
+     * @param sessionId 要中止的会话标识
+     * @return true 表示消息已入队发送
+     */
+    fun sendAbort(sessionId: String): Boolean {
+        val ws = webSocket ?: return false
+        val msg = ChatAbortMessage(sessionId = sessionId)
+        val jsonStr = json.encodeToString(ChatAbortMessage.serializer(), msg)
+        return ws.send(jsonStr)
+    }
+
+    /**
+     * 订阅会话事件流 (chat.subscribe)
+     *
+     * 用于断线重连后重放丢失的事件。
+     *
+     * @param sessionId 会话标识
+     * @param lastSeq 上次收到的最大事件序号
+     * @return true 表示消息已入队发送
+     */
+    fun sendSubscribe(sessionId: String, lastSeq: Int = 0): Boolean {
+        val ws = webSocket ?: return false
+        val msg = ChatSubscribeMessage(sessions = listOf(SessionSubscription(sessionId, lastSeq)))
+        val jsonStr = json.encodeToString(ChatSubscribeMessage.serializer(), msg)
+        return ws.send(jsonStr)
+    }
+
+    /**
+     * 响应工具审批请求 (chat.permission-response)
+     *
+     * @param sessionId 会话标识
+     * @param permissionId 权限请求标识
+     * @param approved 是否批准
+     * @return true 表示消息已入队发送
+     */
+    fun sendPermissionResponse(sessionId: String, permissionId: String, approved: Boolean): Boolean {
+        val ws = webSocket ?: return false
+        val msg = ChatPermissionResponse(sessionId = sessionId, permissionId = permissionId, approved = approved)
+        val jsonStr = json.encodeToString(ChatPermissionResponse.serializer(), msg)
         return ws.send(jsonStr)
     }
 

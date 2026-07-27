@@ -246,14 +246,18 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
      * 创建新项目
      *
      * 验证输入 -> 调用 createProject API -> 成功后关闭对话框并刷新列表
+     *
+     * claudecodeui API 要求:
+     * - path: 项目路径（必填，服务器上的路径）
+     * - customName: 自定义展示名称（可选）
      */
     fun createProject() {
         val state = _uiState.value
-        val name = state.newProjectName.trim()
+        val path = state.newProjectPath.trim()
 
-        // 输入验证
-        if (name.isBlank()) {
-            _uiState.update { it.copy(createError = "请输入项目名称") }
+        // 输入验证 - 路径为必填项
+        if (path.isBlank()) {
+            _uiState.update { it.copy(createError = "请输入项目路径") }
             return
         }
 
@@ -265,15 +269,14 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                     ?: throw RuntimeException("未配置服务器地址，请先登录")
 
                 val request = CreateProjectRequest(
-                    name = name,
-                    path = state.newProjectPath.trim().ifBlank { null },
-                    displayName = state.newProjectDisplayName.trim().ifBlank { null }
+                    path = path,
+                    customName = state.newProjectDisplayName.trim().ifBlank { null }
                 )
 
                 val response = api.createProject(request)
 
                 if (!response.success) {
-                    throw RuntimeException(response.error ?: "创建项目失败")
+                    throw RuntimeException(response.message ?: response.project?.name ?: "创建项目失败")
                 }
 
                 // 创建成功：关闭对话框、清空表单、刷新列表

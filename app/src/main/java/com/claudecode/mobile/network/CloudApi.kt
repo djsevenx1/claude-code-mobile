@@ -3,6 +3,8 @@ package com.claudecode.mobile.network
 import com.claudecode.mobile.network.dto.AuthStatus
 import com.claudecode.mobile.network.dto.CreateProjectRequest
 import com.claudecode.mobile.network.dto.CreateProjectResponse
+import com.claudecode.mobile.network.dto.CreateSessionRequest
+import com.claudecode.mobile.network.dto.CreateSessionResponse
 import com.claudecode.mobile.network.dto.DeleteResponse
 import com.claudecode.mobile.network.dto.GitCommitRequest
 import com.claudecode.mobile.network.dto.GitCommitResponse
@@ -10,12 +12,12 @@ import com.claudecode.mobile.network.dto.GitStatus
 import com.claudecode.mobile.network.dto.HealthStatus
 import com.claudecode.mobile.network.dto.LoginRequest
 import com.claudecode.mobile.network.dto.LoginResponse
+import com.claudecode.mobile.network.dto.MessageHistoryResponse
 import com.claudecode.mobile.network.dto.ModelInfo
 import com.claudecode.mobile.network.dto.Project
 import com.claudecode.mobile.network.dto.RegisterRequest
 import com.claudecode.mobile.network.dto.Session
-import com.claudecode.mobile.network.dto.UpdateSettingsResponse
-import com.claudecode.mobile.network.dto.UserSettings
+import com.claudecode.mobile.network.dto.UserInfo
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -27,192 +29,157 @@ import retrofit2.http.Query
 /**
  * CloudCLI REST API 接口定义
  *
- * 对应 CloudCLI（claudecodeui）服务端的 REST 端点。
- * 所有方法的 baseUrl 由 [NetworkModule] 在构建 Retrofit 实例时动态注入，
- * 以支持用户配置自托管服务器。
+ * 严格对应 claudecodeui (CloudCLI) 服务端的实际 REST 端点。
+ * 所有方法的 baseUrl 由 [NetworkModule] 在构建 Retrofit 实例时动态注入。
  *
  * 鉴权由 [AuthInterceptor] 统一处理，接口层无需关心 token 附加。
- *
- * 返回类型直接使用 DTO 或 DTO 列表；kotlinx-serialization 转换器会自动解析。
- * 对于服务端可能以数组或对象包装返回的接口，约定按数组解析，
- * [NetworkModule] 中配置的 Json 实例开启了宽松模式以兼容字段差异。
  */
 interface CloudApi {
 
     // ===================== 认证相关 =====================
 
-    /**
-     * 用户登录
-     *
-     * POST /api/auth/login
-     *
-     * @param request 登录请求体（用户名 + 密码）
-     * @return 登录响应，含 JWT token 与用户信息
-     */
+    /** POST /api/auth/login - 用户登录 */
     @POST("api/auth/login")
     suspend fun login(@Body request: LoginRequest): LoginResponse
 
-    /**
-     * 用户注册（初始化）
-     *
-     * POST /api/auth/register
-     * 注意：CloudCLI 为单用户系统，仅当数据库中尚无用户时允许注册。
-     *
-     * @param request 注册请求体
-     * @return 注册响应，结构与登录一致
-     */
+    /** POST /api/auth/register - 用户注册（仅首次） */
     @POST("api/auth/register")
     suspend fun register(@Body request: RegisterRequest): LoginResponse
 
-    /**
-     * 查询认证状态
-     *
-     * GET /api/auth/status
-     * 用于判断服务端是否需要初始化设置。
-     *
-     * @return 认证状态信息
-     */
+    /** GET /api/auth/status - 查询认证状态 */
     @GET("api/auth/status")
     suspend fun getAuthStatus(): AuthStatus
 
+    /** GET /api/auth/user - 获取当前用户信息 */
+    @GET("api/auth/user")
+    suspend fun getUser(): UserInfo
+
+    /** POST /api/auth/logout - 登出 */
+    @POST("api/auth/logout")
+    suspend fun logout(): DeleteResponse
+
     // ===================== 项目相关 =====================
 
-    /**
-     * 获取项目列表
-     *
-     * GET /api/projects
-     *
-     * @return 项目列表
-     */
+    /** GET /api/projects - 获取项目列表（含会话） */
     @GET("api/projects")
     suspend fun getProjects(): List<Project>
 
-    /**
-     * 创建项目
-     *
-     * POST /api/projects
-     *
-     * @param request 创建项目请求体
-     * @return 创建结果，含新建项目信息
-     */
-    @POST("api/projects")
+    /** GET /api/projects/archived - 获取已归档项目 */
+    @GET("api/projects/archived")
+    suspend fun getArchivedProjects(): List<Project>
+
+    /** POST /api/projects/create-project - 创建项目 */
+    @POST("api/projects/create-project")
     suspend fun createProject(@Body request: CreateProjectRequest): CreateProjectResponse
 
-    /**
-     * 获取指定项目下的会话列表
-     *
-     * GET /api/projects/{projectId}/sessions
-     *
-     * @param projectId 项目标识
-     * @return 会话列表
-     */
+    /** GET /api/projects/{projectId}/sessions - 获取项目会话列表（分页） */
     @GET("api/projects/{projectId}/sessions")
     suspend fun getProjectSessions(
-        @Path("projectId") projectId: String
+        @Path("projectId") projectId: String,
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
     ): List<Session>
 
-    /**
-     * 获取所有会话列表 (跨项目)
-     *
-     * GET /api/sessions
-     *
-     * @return 全部会话列表
-     */
-    @GET("api/sessions")
-    suspend fun getAllSessions(): List<Session>
+    /** PUT /api/projects/{projectId}/rename - 重命名项目 */
+    @PUT("api/projects/{projectId}/rename")
+    suspend fun renameProject(
+        @Path("projectId") projectId: String,
+        @Body body: Map<String, String>
+    ): DeleteResponse
 
-    /**
-     * 删除指定会话
-     *
-     * DELETE /api/sessions/{sessionId}
-     *
-     * @param sessionId 会话标识
-     * @return 删除结果
-     */
-    @DELETE("api/sessions/{sessionId}")
-    suspend fun deleteSession(@Path("sessionId") sessionId: String): DeleteResponse
+    /** POST /api/projects/{projectId}/toggle-star - 切换项目星标 */
+    @POST("api/projects/{projectId}/toggle-star")
+    suspend fun toggleProjectStar(@Path("projectId") projectId: String): DeleteResponse
 
-    /**
-     * 删除指定项目
-     *
-     * DELETE /api/projects/{projectId}
-     *
-     * @param projectId 项目标识
-     * @return 删除结果
-     */
+    /** POST /api/projects/{projectId}/restore - 恢复已归档项目 */
+    @POST("api/projects/{projectId}/restore")
+    suspend fun restoreProject(@Path("projectId") projectId: String): DeleteResponse
+
+    /** DELETE /api/projects/{projectId} - 删除/归档项目 */
     @DELETE("api/projects/{projectId}")
-    suspend fun deleteProject(@Path("projectId") projectId: String): DeleteResponse
+    suspend fun deleteProject(
+        @Path("projectId") projectId: String,
+        @Query("force") force: Boolean = false
+    ): DeleteResponse
 
-    // ===================== 设置相关 =====================
+    // ===================== 会话相关 (通过 /api/providers) =====================
 
-    /**
-     * 获取用户设置
-     *
-     * GET /api/settings
-     *
-     * @return 用户设置
-     */
-    @GET("api/settings")
-    suspend fun getSettings(): UserSettings
+    /** POST /api/providers/sessions - 创建新会话（发送消息前必须先调用） */
+    @POST("api/providers/sessions")
+    suspend fun createSession(@Body request: CreateSessionRequest): CreateSessionResponse
 
-    /**
-     * 更新用户设置
-     *
-     * PUT /api/settings
-     *
-     * @param settings 新的设置内容
-     * @return 更新结果
-     */
-    @PUT("api/settings")
-    suspend fun updateSettings(@Body settings: UserSettings): UpdateSettingsResponse
+    /** GET /api/providers/sessions/running - 获取所有运行中的会话 */
+    @GET("api/providers/sessions/running")
+    suspend fun getRunningSessions(): List<Session>
+
+    /** GET /api/providers/sessions/archived - 获取已归档的会话 */
+    @GET("api/providers/sessions/archived")
+    suspend fun getArchivedSessions(): List<Session>
+
+    /** GET /api/providers/search/sessions - 搜索会话 */
+    @GET("api/providers/search/sessions")
+    suspend fun searchSessions(
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 50
+    ): List<Session>
+
+    /** DELETE /api/providers/sessions/{sessionId} - 删除/归档会话 */
+    @DELETE("api/providers/sessions/{sessionId}")
+    suspend fun deleteSession(
+        @Path("sessionId") sessionId: String,
+        @Query("force") force: Boolean = false
+    ): DeleteResponse
+
+    /** POST /api/providers/sessions/{sessionId}/restore - 恢复会话 */
+    @POST("api/providers/sessions/{sessionId}/restore")
+    suspend fun restoreSession(@Path("sessionId") sessionId: String): DeleteResponse
+
+    /** GET /api/providers/sessions/{sessionId}/messages - 获取会话消息历史 */
+    @GET("api/providers/sessions/{sessionId}/messages")
+    suspend fun getSessionMessages(
+        @Path("sessionId") sessionId: String,
+        @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0
+    ): MessageHistoryResponse
+
+    /** POST /api/providers/{provider}/sessions/{sessionId}/active-model - 切换会话活跃模型 */
+    @POST("api/providers/{provider}/sessions/{sessionId}/active-model")
+    suspend fun setActiveModel(
+        @Path("provider") provider: String,
+        @Path("sessionId") sessionId: String,
+        @Body body: Map<String, String>
+    ): DeleteResponse
+
+    /** PUT /api/providers/sessions/{sessionId} - 重命名会话 */
+    @PUT("api/providers/sessions/{sessionId}")
+    suspend fun renameSession(
+        @Path("sessionId") sessionId: String,
+        @Body body: Map<String, String>
+    ): DeleteResponse
 
     // ===================== 模型相关 =====================
 
-    /**
-     * 获取指定提供商可用模型列表
-     *
-     * GET /api/providers/{provider}/models
-     *
-     * @param provider 提供商标识（claude/openai/cursor/codex/opencode 等）
-     * @return 模型信息列表
-     */
+    /** GET /api/providers/{provider}/models - 获取指定提供商的模型列表 */
     @GET("api/providers/{provider}/models")
     suspend fun getModels(@Path("provider") provider: String): List<ModelInfo>
 
+    /** GET /api/providers/capabilities - 获取所有提供商能力 */
+    @GET("api/providers/capabilities")
+    suspend fun getCapabilities(): Map<String, kotlinx.serialization.json.JsonElement>
+
     // ===================== Git 相关 =====================
 
-    /**
-     * 获取 Git 仓库状态
-     *
-     * GET /api/git/status
-     *
-     * @param path 项目路径（用于定位仓库）
-     * @return Git 状态信息
-     */
+    /** GET /api/git/status - 获取 Git 状态 */
     @GET("api/git/status")
     suspend fun getGitStatus(@Query("path") path: String): GitStatus
 
-    /**
-     * 提交 Git 变更
-     *
-     * POST /api/git/commit
-     *
-     * @param request 提交请求体
-     * @return 提交结果
-     */
+    /** POST /api/git/commit - 提交 Git 变更 */
     @POST("api/git/commit")
     suspend fun gitCommit(@Body request: GitCommitRequest): GitCommitResponse
 
     // ===================== 系统相关 =====================
 
-    /**
-     * 健康检查
-     *
-     * GET /health
-     * 公开端点，无需鉴权，用于检测服务器连通性与版本。
-     *
-     * @return 服务器健康状态
-     */
+    /** GET /health - 健康检查（无需鉴权） */
     @GET("health")
     suspend fun healthCheck(): HealthStatus
 }

@@ -9,14 +9,16 @@ import com.claudecode.mobile.data.db.CloudDatabase
 import com.claudecode.mobile.data.entity.ChatMessage as EntityChatMessage
 import com.claudecode.mobile.data.repository.ChatRepository
 import com.claudecode.mobile.network.ChatMessage
-import com.claudecode.mobile.network.ChatOptions
 import com.claudecode.mobile.network.CloudFrame
 import com.claudecode.mobile.network.CloudWebSocketClient
 import com.claudecode.mobile.network.ConnectionState
 import com.claudecode.mobile.network.FrameKind
 import com.claudecode.mobile.network.NetworkModule
 import com.claudecode.mobile.network.TokenManager
+import com.claudecode.mobile.network.dto.CreateSessionRequest
+import com.claudecode.mobile.network.dto.HistoryMessage
 import com.claudecode.mobile.network.dto.ModelInfo
+import com.claudecode.mobile.network.dto.Project
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -96,9 +98,21 @@ data class ChatUiState(
     val isSending: Boolean = false,
     val projectName: String = "",
     val sessionId: String = "",
+    val projectPath: String = "",
     val tokenUsage: String? = null,
     val availableModels: List<ModelInfo> = emptyList(),
-    val selectedModel: String = ""
+    val selectedModel: String = "",
+    val isCreatingSession: Boolean = false,
+    val pendingPermission: PendingPermission? = null
+)
+
+/**
+ * 待处理的工具审批请求
+ */
+data class PendingPermission(
+    val permissionId: String,
+    val toolName: String,
+    val input: String
 )
 
 /**
@@ -142,20 +156,20 @@ class ChatViewModel(
     private val _uiState = MutableStateFlow(ChatUiState(sessionId = initialSessionId))
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
-    /** 当前会话 ID (可能由服务端 SESSION_INFO 帧更新) */
+    /** 当前会话 ID (可能由服务端创建后更新) */
     private var currentSessionId: String = initialSessionId
+
+    /** 最后收到的事件序号 (用于断线重连重放) */
+    private var lastSeq: Int = 0
 
     /** 已持久化到 Room 的消息 ID 集合 (避免重复保存) */
     private val savedMessageIds = mutableSetOf<String>()
 
     init {
-        // 初始化时建立 WebSocket 连接并订阅消息流
         connectWebSocket()
         observeConnectionState()
         observeIncomingFrames()
-        loadProjectInfo()
-        loadHistoryIfAvailable()
-        // 加载可用模型列表 (供底部输入栏的模型选择器使用)
+        loadProjectInfoAndPath()
         loadModels()
     }
 
@@ -222,18 +236,28 @@ class ChatViewModel(
      * 解析并处理单条消息帧
      *
      * 根据 [CloudFrame.kind] 分发到对应的处理方法。
+     * 兼容 claudecodeui 服务端的 NormalizedMessage 和协议帧格式。
      */
     private fun handleFrame(frame: CloudFrame) {
+        // 更新 lastSeq（用于断线重连重放）
+        frame.seq?.let { if (it > lastSeq) lastSeq = it }
+
         when (frame.kind) {
-            FrameKind.ASSISTANT_TEXT -> handleAssistantText(frame)
-            FrameKind.USER_MESSAGE -> handleUserMessageEcho(frame)
-            FrameKind.SESSION_INFO -> handleSessionInfo(frame)
+            // AI 输出消息
+            FrameKind.ASSISTANT_TEXT, FrameKind.ASSISTANT -> handleAssistantText(frame)
+            FrameKind.USER_MESSAGE, FrameKind.USER -> handleUserMessageEcho(frame)
             FrameKind.THINKING -> handleThinking(frame)
             FrameKind.TOOL_USE -> handleToolUse(frame)
             FrameKind.TOOL_RESULT -> handleToolResult(frame)
             FrameKind.TOKEN_USAGE -> handleTokenUsage(frame)
-            FrameKind.ERROR -> handleError(frame)
-            FrameKind.DONE -> handleDone()
+
+            // 协议帧
+            FrameKind.ERROR, FrameKind.PROTOCOL_ERROR -> handleError(frame)
+            FrameKind.DONE, FrameKind.COMPLETE -> handleDone(frame)
+            FrameKind.SESSION_INFO, FrameKind.SESSION_UPSERTED -> handleSessionInfo(frame)
+            FrameKind.CHAT_SUBSCRIBED -> handleChatSubscribed(frame)
+            FrameKind.LOADING_PROGRESS -> { /* 加载进度，暂不处理 */ }
+            FrameKind.PERMISSION_REQUEST -> handlePermissionRequest(frame)
             FrameKind.CONNECTED -> { /* 连接确认帧，无需处理 */ }
             else -> { /* 未知帧类型，忽略 */ }
         }
@@ -290,9 +314,9 @@ class ChatViewModel(
      * 或在会话切换时更新当前会话。
      */
     private fun handleSessionInfo(frame: CloudFrame) {
-        val sessionId = frame.sessionId
-            ?: CloudWebSocketClient.getString(frame, "session_id")
+        val sessionId = frame.getSessionIdSafe()
             ?: CloudWebSocketClient.getString(frame, "sessionId")
+            ?: CloudWebSocketClient.getString(frame, "session_id")
         if (!sessionId.isNullOrBlank()) {
             currentSessionId = sessionId
             _uiState.update { it.copy(sessionId = sessionId) }
@@ -439,10 +463,17 @@ class ChatViewModel(
     /**
      * 处理流结束帧，标记回复完成
      *
-     * DONE 帧表示本次 AI 回复已全部输出完毕，将所有流式消息标记为完成，
-     * 解除发送锁定，并持久化最终消息到本地缓存。
+     * DONE / COMPLETE 帧表示本次 AI 回复已全部输出完毕。
+     * COMPLETE 帧还携带 exitCode, success, aborted 等信息。
+     * 将所有流式消息标记为完成，解除发送锁定。
+     *
+     * @param frame 结束帧（COMPLETE 帧携带额外信息）
      */
-    private fun handleDone() {
+    private fun handleDone(frame: CloudFrame) {
+        // 检查是否为中止
+        val aborted = CloudWebSocketClient.getString(frame, "aborted")?.toBoolean() ?: false
+        val success = CloudWebSocketClient.getString(frame, "success")?.toBoolean() ?: true
+
         _uiState.update { state ->
             val messages = state.messages.toMutableList()
             // 将所有正在流式输出的消息标记为完成
@@ -453,8 +484,56 @@ class ChatViewModel(
             }
             state.copy(messages = messages, isSending = false)
         }
+
+        // 若被中止，添加提示
+        if (aborted) {
+            _uiState.update { state ->
+                state.copy(
+                    messages = state.messages + ChatUiMessage(
+                        role = MessageRole.SYSTEM,
+                        content = "已停止生成"
+                    )
+                )
+            }
+        }
+
         // 将最终消息持久化到本地缓存
         _uiState.value.messages.forEach { persistMessage(it) }
+    }
+
+    /**
+     * 处理订阅确认帧
+     *
+     * CHAT_SUBSCRIBED 帧携带 isProcessing 和 pendingPermissions，
+     * 表示已成功订阅会话事件流。
+     */
+    private fun handleChatSubscribed(frame: CloudFrame) {
+        val isProcessing = CloudWebSocketClient.getString(frame, "isProcessing")?.toBoolean() ?: false
+        if (isProcessing) {
+            _uiState.update { it.copy(isSending = true) }
+        }
+    }
+
+    /**
+     * 处理工具审批请求帧
+     *
+     * PERMISSION_REQUEST 帧表示 AI 请求执行工具，需要用户确认。
+     * 更新 UI 状态以展示审批对话框。
+     */
+    private fun handlePermissionRequest(frame: CloudFrame) {
+        val permissionId = CloudWebSocketClient.getString(frame, "permissionId")
+            ?: CloudWebSocketClient.getString(frame, "permission_id")
+            ?: return
+        val toolName = CloudWebSocketClient.getString(frame, "toolName")
+            ?: CloudWebSocketClient.getString(frame, "tool_name")
+            ?: "工具"
+        val input = CloudWebSocketClient.getString(frame, "input")
+            ?: CloudWebSocketClient.getString(frame, "arguments")
+            ?: frame.raw
+
+        _uiState.update {
+            it.copy(pendingPermission = PendingPermission(permissionId, toolName, input))
+        }
     }
 
     // ============================================================
@@ -466,27 +545,39 @@ class ChatViewModel(
      *
      * 流程：
      * 1. 校验输入文本非空且当前非发送中状态
-     * 2. 构造 [ChatMessage] (包含命令、sessionId、cwd)
-     * 3. 本地立即添加用户消息到 UI (乐观更新)
-     * 4. 通过 WebSocket 发送给服务端
-     * 5. 若发送失败 (WebSocket 未连接)，添加错误提示
+     * 2. 确保已创建会话 (sessionId 非空)，若为空则先创建
+     * 3. 构造 chat.send 消息 (type="chat.send", sessionId, message, projectPath, model)
+     * 4. 本地立即添加用户消息到 UI (乐观更新)
+     * 5. 通过 WebSocket 发送给服务端
+     * 6. 若发送失败 (WebSocket 未连接)，添加错误提示
      */
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         if (text.isBlank()) return
         if (_uiState.value.isSending) return
 
-        // 构造要发送的 ChatMessage (携带当前选中的模型)
+        // 若 sessionId 为空，先创建会话再发送
+        if (currentSessionId.isBlank()) {
+            createSessionAndSend(text)
+            return
+        }
+
+        doSendMessage(text)
+    }
+
+    /**
+     * 执行实际的消息发送
+     */
+    private fun doSendMessage(text: String) {
+        // 构造 chat.send 消息 (使用 claudecodeui WebSocket 协议格式)
         val chatMessage = ChatMessage(
-            command = text,
-            sessionId = currentSessionId.ifBlank { null },
-            cwd = null,
-            options = ChatOptions(
-                model = _uiState.value.selectedModel.ifBlank { null }
-            )
+            sessionId = currentSessionId,
+            message = text,
+            projectPath = _uiState.value.projectPath.ifBlank { null },
+            model = _uiState.value.selectedModel.ifBlank { null }
         )
 
-        // 本地立即添加用户消息 (乐观更新，提升响应速度)
+        // 本地立即添加用户消息 (乐观更新)
         val userUiMessage = ChatUiMessage(
             role = MessageRole.USER,
             content = text
@@ -515,6 +606,93 @@ class ChatViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * 创建会话并发送消息
+     *
+     * 当 sessionId 为空时，先调用 POST /api/providers/sessions 创建会话，
+     * 获取 sessionId 后再发送消息。
+     */
+    private fun createSessionAndSend(text: String) {
+        val projectPath = _uiState.value.projectPath
+        if (projectPath.isBlank()) {
+            _uiState.update { state ->
+                state.copy(
+                    messages = state.messages + ChatUiMessage(
+                        role = MessageRole.ERROR,
+                        content = "无法创建会话：项目路径未知，请重新进入页面"
+                    )
+                )
+            }
+            return
+        }
+
+        _uiState.update { it.copy(isCreatingSession = true) }
+
+        viewModelScope.launch {
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                    ?: throw RuntimeException("未配置服务器地址")
+
+                val response = api.createSession(
+                    CreateSessionRequest(provider = "claude", projectPath = projectPath)
+                )
+
+                val newSessionId = response.getSessionIdSafe()
+                if (newSessionId.isNullOrBlank()) {
+                    throw RuntimeException(response.error ?: "创建会话失败")
+                }
+
+                currentSessionId = newSessionId
+                _uiState.update {
+                    it.copy(
+                        sessionId = newSessionId,
+                        isCreatingSession = false
+                    )
+                }
+
+                // 订阅会话事件流
+                webSocketClient.sendSubscribe(newSessionId, 0)
+
+                // 发送消息
+                doSendMessage(text)
+
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isCreatingSession = false,
+                        messages = it.messages + ChatUiMessage(
+                            role = MessageRole.ERROR,
+                            content = "创建会话失败: ${e.message}"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 中止当前 AI 回复
+     *
+     * 发送 chat.abort 消息到服务端，中止正在运行的会话。
+     */
+    fun abortGeneration() {
+        if (!currentSessionId.isBlank() && _uiState.value.isSending) {
+            webSocketClient.sendAbort(currentSessionId)
+            _uiState.update { it.copy(isSending = false) }
+        }
+    }
+
+    /**
+     * 响应工具审批请求
+     *
+     * @param approved 是否批准工具执行
+     */
+    fun respondToPermission(approved: Boolean) {
+        val permission = _uiState.value.pendingPermission ?: return
+        webSocketClient.sendPermissionResponse(currentSessionId, permission.permissionId, approved)
+        _uiState.update { it.copy(pendingPermission = null) }
     }
 
     // ============================================================
@@ -577,28 +755,82 @@ class ChatViewModel(
     // ============================================================
 
     /**
-     * 加载项目信息 (名称)
+     * 加载项目信息 (名称与路径)
      *
-     * 从 Room 数据库查询项目名称，用于 TopAppBar 显示。
-     * 若项目不存在则使用 projectId 作为回退。
+     * 先从 Room 本地缓存查询项目名称，同时通过 API 获取项目路径。
+     * 项目路径用于创建会话 (POST /api/providers/sessions) 和发送消息 (chat.send)。
      */
-    private fun loadProjectInfo() {
+    private fun loadProjectInfoAndPath() {
         viewModelScope.launch {
+            // 先从本地加载项目名称
             val project = projectDao.getById(projectId)
             _uiState.update { it.copy(projectName = project?.name ?: projectId) }
+
+            // 通过 API 获取项目路径
+            try {
+                val api = NetworkModule.createCloudApiFromConfig()
+                if (api != null) {
+                    val projects = api.getProjects()
+                    val serverProject = projects.find { it.id == projectId }
+                    if (serverProject != null) {
+                        _uiState.update {
+                            it.copy(
+                                projectName = serverProject.displayName ?: serverProject.name,
+                                projectPath = serverProject.path
+                            )
+                        }
+
+                        // 若已有 sessionId，加载服务端消息历史
+                        if (initialSessionId.isNotBlank()) {
+                            loadServerMessageHistory(initialSessionId)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // API 加载失败不影响本地缓存的使用
+            }
         }
     }
 
     /**
-     * 加载历史消息 (若已有 sessionId)
+     * 从服务端加载会话消息历史
      *
-     * 当 initialSessionId 非空时，从 Room 本地缓存加载该会话的历史消息，
-     * 转换为 [ChatUiMessage] 后追加到消息列表。
+     * 调用 GET /api/providers/sessions/{sessionId}/messages 获取服务端历史消息，
+     * 转换为 [ChatUiMessage] 后更新 UI。
+     * 同时订阅会话事件流以便接收后续实时消息。
+     *
+     * @param sessionId 会话标识
      */
-    private fun loadHistoryIfAvailable() {
-        if (initialSessionId.isBlank()) return
+    private fun loadServerMessageHistory(sessionId: String) {
         viewModelScope.launch {
-            val history = chatRepository.observeMessages(initialSessionId).first()
+            try {
+                val api = NetworkModule.createCloudApiFromConfig() ?: return@launch
+                val response = api.getSessionMessages(sessionId)
+
+                if (response.success && response.data != null) {
+                    val historyMessages = response.data.messages
+                    if (historyMessages.isNotEmpty()) {
+                        val uiMessages = historyMessages.map { it.toUiMessage() }
+                        _uiState.update { it.copy(messages = uiMessages) }
+                    }
+                }
+
+                // 订阅会话事件流 (断线重连后可重放)
+                webSocketClient.sendSubscribe(sessionId, lastSeq)
+
+            } catch (e: Exception) {
+                // 服务端历史加载失败，回退到本地缓存
+                loadLocalHistory(sessionId)
+            }
+        }
+    }
+
+    /**
+     * 从本地 Room 缓存加载历史消息 (回退方案)
+     */
+    private fun loadLocalHistory(sessionId: String) {
+        viewModelScope.launch {
+            val history = chatRepository.observeMessages(sessionId).first()
             if (history.isNotEmpty()) {
                 val uiMessages = history.map { it.toUiMessage() }
                 _uiState.update { it.copy(messages = it.messages + uiMessages) }
@@ -663,6 +895,39 @@ class ChatViewModel(
             isStreaming = false,
             timestamp = timestamp,
             toolName = toolName
+        )
+    }
+
+    /**
+     * 服务端历史消息 -> UI 消息
+     *
+     * 将 [HistoryMessage] (claudecodeui 服务端 NormalizedMessage 格式)
+     * 转换为 UI 层使用的 [ChatUiMessage]。
+     */
+    private fun HistoryMessage.toUiMessage(): ChatUiMessage {
+        val roleEnum = when {
+            kind == "user" || role == "user" -> MessageRole.USER
+            kind == "tool_use" || kind == "tool_result" -> MessageRole.ASSISTANT
+            kind == "error" -> MessageRole.ERROR
+            else -> MessageRole.ASSISTANT
+        }
+        val content = when (kind) {
+            "tool_use" -> getToolInputSafe() ?: getTextSafe() ?: ""
+            "tool_result" -> getToolResultSafe() ?: getTextSafe() ?: ""
+            else -> getTextSafe() ?: ""
+        }
+        val toolName = when (kind) {
+            "tool_use", "tool_result" -> getToolNameSafe()
+            else -> null
+        }
+        return ChatUiMessage(
+            id = id ?: UUID.randomUUID().toString(),
+            role = roleEnum,
+            content = content,
+            isStreaming = false,
+            timestamp = System.currentTimeMillis(),
+            toolName = toolName,
+            thinking = thinking
         )
     }
 

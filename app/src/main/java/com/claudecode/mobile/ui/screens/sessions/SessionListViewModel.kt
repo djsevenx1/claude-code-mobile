@@ -107,7 +107,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址，请先登录")
 
-                val sessions = api.getAllSessions()
+                val sessions = api.getRunningSessions()
                 allSessions = sessions
                 applySearchFilter()
             } catch (e: Exception) {
@@ -132,7 +132,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                     ?: throw RuntimeException("未配置服务器地址")
 
-                val sessions = api.getAllSessions()
+                val sessions = api.getRunningSessions()
                 allSessions = sessions
                 _uiState.update { it.copy(isRefreshing = false) }
                 applySearchFilter()

@@ -76,7 +76,7 @@ import com.claudecode.mobile.network.dto.ModelInfo
 // ============================================================
 
 /** 应用版本号 */
-private const val APP_VERSION = "1.2.1"
+private const val APP_VERSION = "1.3.0"
 
 /** 报告问题页面 URL */
 private const val ISSUE_URL = "https://github.com/djsevenx1/claude-code-mobile/issues"
@@ -161,7 +161,7 @@ fun SettingsScreen(
                 .padding(innerPadding)
         ) {
             // 顶部加载/保存进度条
-            if (uiState.isLoading || uiState.isSaving) {
+            if (uiState.isLoading) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.primary
@@ -229,8 +229,8 @@ fun SettingsScreen(
                         icon = Icons.Filled.Build,
                         title = "自动批准工具",
                         subtitle = "允许 AI 自动执行工具调用，无需手动确认",
-                        checked = uiState.settings?.autoApproveTools ?: false,
-                        enabled = uiState.settings != null,
+                        checked = uiState.autoApproveTools,
+                        enabled = true,
                         onCheckedChange = viewModel::toggleAutoApproveTools
                     )
                 }
@@ -239,8 +239,8 @@ fun SettingsScreen(
                         icon = Icons.Filled.Bolt,
                         title = "流式输出",
                         subtitle = "实时逐字输出 AI 回复内容",
-                        checked = uiState.settings?.streamingOutput ?: false,
-                        enabled = uiState.settings != null,
+                        checked = uiState.streamingOutput,
+                        enabled = true,
                         onCheckedChange = viewModel::toggleStreamingOutput
                     )
                 }
@@ -249,8 +249,8 @@ fun SettingsScreen(
                         icon = Icons.Filled.DataUsage,
                         title = "显示 Token 用量",
                         subtitle = "在对话中展示每次请求的 Token 消耗",
-                        checked = uiState.settings?.showTokenUsage ?: false,
-                        enabled = uiState.settings != null,
+                        checked = uiState.showTokenUsage,
+                        enabled = true,
                         onCheckedChange = viewModel::toggleShowTokenUsage
                     )
                 }

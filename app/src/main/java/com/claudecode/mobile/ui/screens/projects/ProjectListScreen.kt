@@ -714,32 +714,20 @@ private fun CreateProjectDialog(
         title = { Text("新建项目") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // 项目名称 (必填)
+                // 项目路径 (必填) - claudecodeui API 要求 path 参数
                 OutlinedTextField(
-                    value = state.newProjectName,
-                    onValueChange = onNameChange,
+                    value = state.newProjectPath,
+                    onValueChange = onPathChange,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("项目名称 *") },
-                    placeholder = { Text("my-project") },
+                    label = { Text("项目路径 *") },
+                    placeholder = { Text("/home/user/projects/my-project") },
                     singleLine = true,
                     enabled = !state.isCreating,
                     isError = state.createError != null,
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                // 项目路径 (可选)
-                OutlinedTextField(
-                    value = state.newProjectPath,
-                    onValueChange = onPathChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("项目路径 (可选)") },
-                    placeholder = { Text("/home/user/projects/my-project") },
-                    singleLine = true,
-                    enabled = !state.isCreating,
-                    shape = RoundedCornerShape(8.dp)
-                )
-
-                // 展示名称 (可选)
+                // 自定义展示名称 (可选) - 对应 API 的 customName 参数
                 OutlinedTextField(
                     value = state.newProjectDisplayName,
                     onValueChange = onDisplayNameChange,
@@ -764,7 +752,7 @@ private fun CreateProjectDialog(
         confirmButton = {
             TextButton(
                 onClick = onCreate,
-                enabled = !state.isCreating
+                enabled = !state.isCreating && state.newProjectPath.isNotBlank()
             ) {
                 if (state.isCreating) {
                     // 创建中: 显示进度指示器

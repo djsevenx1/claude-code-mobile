@@ -153,7 +153,7 @@ fun SessionListScreen(
                                     isDeleting = uiState.isDeleting,
                                     onSessionClick = { session ->
                                         onNavigateToChat(
-                                            session.projectId ?: "",
+                                            session.getProjectIdSafe() ?: "",
                                             session.id
                                         )
                                     },
@@ -365,7 +365,7 @@ private fun SessionCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "${session.messageCount ?: 0} 条消息",
+                            text = "${session.getMessageCountSafe() ?: 0} 条消息",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
