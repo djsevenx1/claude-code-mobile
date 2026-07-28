@@ -30,12 +30,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private val tokenManager by lazy { TokenManager(applicationContext) }
 
-    private var filePathCallback: ((Array<Uri>?) -> Unit)? = null
+    private var filePathCallback: android.webkit.ValueCallback<Array<Uri>?>? = null
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.GetMultipleContents()
     ) { uris ->
-        filePathCallback?.invoke(uris?.toTypedArray())
+        filePathCallback?.onReceiveValue(uris?.toTypedArray())
         filePathCallback = null
     }
 
@@ -212,10 +212,10 @@ class MainActivity : ComponentActivity() {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(
                 webView: WebView?,
-                callback: ((Array<Uri>?) -> Unit)?,
-                params: FileChooserParams?
+                filePathCallback: android.webkit.ValueCallback<Array<Uri>?>?,
+                fileChooserParams: FileChooserParams?
             ): Boolean {
-                filePathCallback = callback
+                this@MainActivity.filePathCallback = filePathCallback
                 fileChooserLauncher.launch("*/*")
                 return true
             }
