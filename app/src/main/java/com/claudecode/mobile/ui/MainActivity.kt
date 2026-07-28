@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var rootContainer: FrameLayout
     private val tokenManager by lazy { TokenManager(applicationContext) }
 
     private var filePathCallback: android.webkit.ValueCallback<Array<Uri>?>? = null
@@ -92,6 +93,17 @@ class MainActivity : ComponentActivity() {
         }
         CookieManager.getInstance().setCookie(baseUrl, "token=$token; path=/; max-age=2592000")
 
+        // --- 容器（用原生 padding 处理系统栏） ---
+        rootContainer = FrameLayout(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            // 初始用深色，网页加载后会动态读取背景色更新
+            setBackgroundColor(Color.parseColor("#0F0F0F"))
+        }
+        rootContainer.addView(webView)
+
         // --- JavaScript 接口 ---
         webView.addJavascriptInterface(
             object {
@@ -100,6 +112,20 @@ class MainActivity : ComponentActivity() {
 
                 @JavascriptInterface
                 fun getServerUrl(): String = baseUrl
+
+                @JavascriptInterface
+                fun setSystemBarColor(color: String) {
+                    runOnUiThread {
+                        try {
+                            val parsed = parseWebColor(color)
+                            rootContainer.setBackgroundColor(parsed)
+                            window.statusBarColor = parsed
+                            window.navigationBarColor = parsed
+                        } catch(e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
             },
             "AndroidBridge"
         )
@@ -141,8 +167,35 @@ class MainActivity : ComponentActivity() {
                     null
                 )
 
+                // 读取网页背景色，动态设置系统栏颜色
+                view.evaluateJavascript(
+                    """
+                    (function() {
+                        function getBg(el) {
+                            if (!el) return null;
+                            try {
+                                var bg = window.getComputedStyle(el).backgroundColor;
+                                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+                            } catch(e) {}
+                            return null;
+                        }
+                        // 依次尝试 body -> html -> #root -> header
+                        var color = getBg(document.body)
+                            || getBg(document.documentElement)
+                            || getBg(document.getElementById('root'))
+                            || getBg(document.querySelector('header'))
+                            || '#0F0F0F';
+                        try {
+                            AndroidBridge.setSystemBarColor(color);
+                        } catch(e) {
+                            console.log('setSystemBarColor error:', e);
+                        }
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+
                 // 注入 CSS：仅处理滚动优化和隐藏 PWA 提示
-                // 不再处理 top/padding-top，由原生 container padding 统一处理
                 view.evaluateJavascript(
                     """
                     (function() {
@@ -197,26 +250,40 @@ class MainActivity : ComponentActivity() {
         // 加载 Web 端
         webView.loadUrl(baseUrl)
 
-        // --- 用 FrameLayout 包裹 WebView，用原生 padding 处理系统栏 ---
-        // WebView 的 position:fixed 元素相对于 WebView 视口定位，
-        // 容器加 padding 后，WebView 整体下移，fixed 元素自然在状态栏下方
-        val container = FrameLayout(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundColor(Color.BLACK)
-        }
-        container.addView(webView)
-
         // 应用 WindowInsets：状态栏高度作为顶部 padding，导航栏高度作为底部 padding
-        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(0, systemBars.top, 0, systemBars.bottom)
             insets
         }
 
-        setContentView(container)
+        setContentView(rootContainer)
+    }
+
+    /**
+     * 解析网页返回的颜色字符串为 Android Color int。
+     * 支持 "rgb(r, g, b)"、"rgba(r, g, b, a)"、"#RRGGBB" 格式。
+     */
+    private fun parseWebColor(color: String): Int {
+        return try {
+            val trimmed = color.trim()
+            when {
+                trimmed.startsWith("#") -> Color.parseColor(trimmed)
+                trimmed.startsWith("rgb") -> {
+                    val nums = trimmed
+                        .replace(Regex("[^0-9,.]"), "")
+                        .split(",")
+                        .map { it.trim().toFloat() }
+                    val r = nums.getOrElse(0) { 0f }.toInt()
+                    val g = nums.getOrElse(1) { 0f }.toInt()
+                    val b = nums.getOrElse(2) { 0f }.toInt()
+                    Color.rgb(r, g, b)
+                }
+                else -> Color.parseColor("#0F0F0F")
+            }
+        } catch(e: Exception) {
+            Color.parseColor("#0F0F0F")
+        }
     }
 
     private fun showErrorPage(baseUrl: String) {
