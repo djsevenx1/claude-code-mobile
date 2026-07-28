@@ -196,7 +196,13 @@ class ChatViewModel(
             }
 
             // 连接 WebSocket (内部会先将状态置为 Connecting，握手成功后置为 Connected)
-            webSocketClient.connect(serverUrl, token)
+            try {
+                webSocketClient.connect(serverUrl, token)
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(connectionState = ConnectionState.Error("连接失败: ${e.message}"))
+                }
+            }
         }
     }
 
@@ -223,7 +229,11 @@ class ChatViewModel(
     private fun observeIncomingFrames() {
         viewModelScope.launch {
             webSocketClient.messageFlow.collect { frame ->
-                handleFrame(frame)
+                try {
+                    handleFrame(frame)
+                } catch (e: Exception) {
+                    // 单帧处理异常不影响后续消息接收
+                }
             }
         }
     }
@@ -763,12 +773,12 @@ class ChatViewModel(
      */
     private fun loadProjectInfoAndPath() {
         viewModelScope.launch {
-            // 先从本地加载项目名称
-            val project = projectDao.getById(projectId)
-            _uiState.update { it.copy(projectName = project?.name ?: projectId) }
-
-            // 通过 API 获取项目路径
             try {
+                // 先从本地加载项目名称
+                val project = projectDao.getById(projectId)
+                _uiState.update { it.copy(projectName = project?.name ?: projectId) }
+
+                // 通过 API 获取项目路径
                 val api = NetworkModule.createCloudApiFromConfig()
                 if (api != null) {
                     val projects = api.getProjects()
@@ -776,8 +786,8 @@ class ChatViewModel(
                     if (serverProject != null) {
                         _uiState.update {
                             it.copy(
-                                projectName = serverProject.displayName ?: serverProject.name,
-                                projectPath = serverProject.path
+                                projectName = serverProject.getDisplayNameSafe(),
+                                projectPath = serverProject.getPathSafe()
                             )
                         }
 

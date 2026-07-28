@@ -187,10 +187,12 @@ fun SessionListScreen(
                                     isDeleting = uiState.isDeleting,
                                     isProcessing = uiState.isProcessing,
                                     onSessionClick = { session ->
-                                        onNavigateToChat(
-                                            session.getProjectIdSafe() ?: "",
-                                            session.id
-                                        )
+                                        val projectId = session.getProjectIdSafe()
+                                        val sessionId = session.getIdSafe()
+                                        // 安全检查: projectId 或 sessionId 为空时不导航，防止崩溃
+                                        if (!projectId.isNullOrBlank() && sessionId.isNotBlank()) {
+                                            onNavigateToChat(projectId, sessionId)
+                                        }
                                     },
                                     onDeleteSession = viewModel::deleteSession,
                                     onRenameSession = viewModel::showRenameDialog,
@@ -333,16 +335,16 @@ private fun SessionListContent(
         ) {
             items(
                 items = sessions,
-                key = { session -> session.id }
+                key = { session -> session.getIdSafe() }
             ) { session ->
                 SessionCard(
                     session = session,
                     isDeleting = isDeleting,
                     isProcessing = isProcessing,
                     onClick = { onSessionClick(session) },
-                    onDelete = { onDeleteSession(session.id) },
+                    onDelete = { onDeleteSession(session.getIdSafe()) },
                     onRename = { onRenameSession(session) },
-                    onArchive = { onArchiveSession(session.id) }
+                    onArchive = { onArchiveSession(session.getIdSafe()) }
                 )
             }
         }
@@ -442,7 +444,7 @@ private fun SessionCard(
                     // 相对时间
                     Text(
                         text = formatRelativeTime(
-                            session.lastActiveAt ?: session.updatedAt ?: session.createdAt
+                            session.getLastActivitySafe()
                         ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
@@ -716,9 +718,7 @@ private fun ErrorStateView(
  * @return 用于展示的会话标题
  */
 private fun getSessionDisplayTitle(session: Session): String {
-    return session.title?.takeIf { it.isNotBlank() }
-        ?: session.summary?.takeIf { it.isNotBlank() }
-        ?: "未命名会话"
+    return session.getTitleSafe()
 }
 
 // ============================================================
@@ -881,7 +881,7 @@ private fun ArchivedSessionsDialog(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     // 恢复按钮
                                     TextButton(
-                                        onClick = { onRestore(session.id) },
+                                        onClick = { onRestore(session.getIdSafe()) },
                                         enabled = !isProcessing,
                                         contentPadding = PaddingValues(
                                             horizontal = 8.dp,

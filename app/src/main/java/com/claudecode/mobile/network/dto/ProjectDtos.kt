@@ -29,11 +29,17 @@ import kotlinx.serialization.json.JsonElement
  */
 @Serializable
 data class Project(
+    // 服务端返回 projectId (驼峰), 旧版可能返回 id
+    @SerialName("projectId")
     val id: String? = null,
+    // 服务端不返回 name, 由 path 推导; 保留字段兼容旧版
     val name: String = "",
+    // 服务端返回 path 和 fullPath
     val path: String = "",
-    @SerialName("display_name")
+    // 服务端返回 displayName (驼峰), 非 display_name
+    @SerialName("displayName")
     val displayName: String? = null,
+    val fullPath: String? = null,
     @SerialName("last_modified")
     val lastModified: String? = null,
     @SerialName("created_at")
@@ -43,10 +49,36 @@ data class Project(
     @SerialName("session_count")
     val sessionCount: Int? = null,
     val sessions: List<Session>? = null,
+    val sessionMeta: SessionMeta? = null,
     @SerialName("isArchived")
     val isArchived: Boolean? = null,
     @SerialName("isStarred")
     val isStarred: Boolean? = null
+) {
+    /** 统一获取项目 ID (兼容 projectId 和 id) */
+    fun getIdSafe(): String? = id
+
+    /** 统一获取展示名称 */
+    fun getDisplayNameSafe(): String =
+        displayName?.takeIf { it.isNotBlank() }
+            ?: name.takeIf { it.isNotBlank() }
+            ?: path.substringAfterLast("/").takeIf { it.isNotBlank() }
+            ?: id
+            ?: "未命名项目"
+
+    /** 统一获取路径 */
+    fun getPathSafe(): String = path.ifBlank { fullPath ?: "" }
+}
+
+/**
+ * 会话分页元信息
+ *
+ * GET /api/projects 返回的 sessionMeta 字段。
+ */
+@Serializable
+data class SessionMeta(
+    val hasMore: Boolean = false,
+    val total: Int = 0
 )
 
 /**
@@ -81,38 +113,51 @@ data class CreateProjectResponse(
 /**
  * 会话信息
  *
- * 从 GET /api/providers/sessions/running 或项目内嵌 sessions 获取。
+ * 对应 claudecodeui 服务端的 SessionSummary 类型。
+ * GET /api/projects 返回的项目内嵌 sessions 使用此格式。
  *
- * @param id 会话唯一标识
- * @param projectId 所属项目标识
- * @param title 会话标题
- * @param summary 会话摘要（可选）
- * @param createdAt 创建时间
- * @param updatedAt 最后更新时间
- * @param lastActiveAt 最后活跃时间（可选）
- * @param messageCount 消息数量（可选）
+ * 服务端实际返回的字段 (SessionSummary):
+ *   id, provider, summary, messageCount, lastActivity
+ *
+ * 其他端点 (如 /api/providers/sessions/running) 可能返回更多字段，
+ * 通过 @SerialName 兼容驼峰和蛇形两种命名风格。
+ *
+ * @param id 会话唯一标识 (服务端必填)
+ * @param projectId 所属项目标识 (内嵌 sessions 中不返回，由上层补充)
+ * @param title 会话标题 (服务端不返回此字段，使用 summary 代替)
+ * @param summary 会话摘要 / 自定义名称
+ * @param lastActivity 最后活跃时间 (驼峰，服务端返回此字段)
+ * @param messageCount 消息数量 (驼峰)
  * @param provider 会话使用的 AI 提供商
- * @param providerSessionId 提供商会话 ID（可选）
  * @param isArchived 是否已归档
  */
 @Serializable
 data class Session(
-    val id: String,
+    // 服务端返回 id (小写)，设为可空+默认值防止解析崩溃
+    val id: String? = null,
+    // 内嵌 sessions 不返回 project_id，由 SessionListViewModel 从父项目补充
     @SerialName("project_id")
     val projectId: String? = null,
     @SerialName("projectId")
     val projectIdAlt: String? = null,
+    // 服务端不返回 title，使用 summary 代替显示
     val title: String? = null,
     val summary: String? = null,
+    // 服务端返回 lastActivity (驼峰)
+    @SerialName("lastActivity")
+    val lastActivity: String? = null,
+    // 兼容旧版蛇形命名
+    @SerialName("last_active_at")
+    val lastActiveAt: String? = null,
     @SerialName("created_at")
     val createdAt: String? = null,
     @SerialName("updated_at")
     val updatedAt: String? = null,
-    @SerialName("last_active_at")
-    val lastActiveAt: String? = null,
-    @SerialName("message_count")
-    val messageCount: Int? = null,
+    // 服务端返回 messageCount (驼峰)
     @SerialName("messageCount")
+    val messageCount: Int? = null,
+    // 兼容旧版蛇形命名
+    @SerialName("message_count")
     val messageCountAlt: Int? = null,
     val provider: String? = null,
     @SerialName("provider_session_id")
@@ -120,11 +165,24 @@ data class Session(
     @SerialName("isArchived")
     val isArchived: Boolean? = null
 ) {
+    /** 统一获取会话 ID (防止 id 为 null 导致崩溃) */
+    fun getIdSafe(): String = id ?: ""
+
     /** 统一获取 projectId（兼容不同字段名） */
     fun getProjectIdSafe(): String? = projectId ?: projectIdAlt
 
     /** 统一获取 messageCount（兼容不同字段名） */
     fun getMessageCountSafe(): Int? = messageCount ?: messageCountAlt
+
+    /** 统一获取最后活跃时间 (优先 lastActivity，回退到其他时间字段) */
+    fun getLastActivitySafe(): String? =
+        lastActivity ?: lastActiveAt ?: updatedAt ?: createdAt
+
+    /** 统一获取显示标题 (服务端不返回 title，使用 summary 代替) */
+    fun getTitleSafe(): String =
+        title?.takeIf { it.isNotBlank() }
+            ?: summary?.takeIf { it.isNotBlank() }
+            ?: "未命名对话"
 }
 
 /**

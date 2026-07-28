@@ -145,7 +145,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                             session
                         }
                     }
-                }.sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
+                }.sortedByDescending { it.getLastActivitySafe() ?: "" }
                 allSessions = sessions
                 applySearchFilter()
             } catch (e: Exception) {
@@ -179,7 +179,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                             session
                         }
                     }
-                }.sortedByDescending { it.updatedAt ?: it.lastActiveAt ?: it.createdAt ?: "" }
+                }.sortedByDescending { it.getLastActivitySafe() ?: "" }
                 allSessions = sessions
                 _uiState.update { it.copy(isRefreshing = false) }
                 applySearchFilter()
@@ -273,7 +273,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 }
 
                 // 从本地缓存中移除已删除的会话，并重新应用搜索过滤
-                allSessions = allSessions.filter { it.id != sessionId }
+                allSessions = allSessions.filter { it.getIdSafe() != sessionId }
                 _uiState.update { it.copy(isDeleting = false) }
                 applySearchFilter()
             } catch (e: Exception) {
@@ -296,7 +296,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update {
             it.copy(
                 showRenameDialog = true,
-                renamingSessionId = session.id,
+                renamingSessionId = session.getIdSafe(),
                 renameText = session.title?.takeIf { it.isNotBlank() }
                     ?: session.summary?.takeIf { it.isNotBlank() }
                     ?: ""
@@ -354,7 +354,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
 
                 // 更新本地缓存中的会话标题，并重新应用搜索过滤
                 allSessions = allSessions.map { session ->
-                    if (session.id == sessionId) session.copy(title = title) else session
+                    if (session.getIdSafe() == sessionId) session.copy(title = title) else session
                 }
                 _uiState.update {
                     it.copy(
@@ -399,7 +399,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 }
 
                 // 从本地缓存中移除已归档的会话，并重新应用搜索过滤
-                allSessions = allSessions.filter { it.id != sessionId }
+                allSessions = allSessions.filter { it.getIdSafe() != sessionId }
                 _uiState.update { it.copy(isProcessing = false) }
                 applySearchFilter()
             } catch (e: Exception) {
@@ -495,7 +495,7 @@ class SessionListViewModel(application: Application) : AndroidViewModel(applicat
                 // 从已归档列表中移除已恢复的会话
                 _uiState.update {
                     it.copy(
-                        archivedSessions = it.archivedSessions.filter { s -> s.id != sessionId },
+                        archivedSessions = it.archivedSessions.filter { s -> s.getIdSafe() != sessionId },
                         isProcessing = false
                     )
                 }

@@ -258,16 +258,13 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                 val api = NetworkModule.createCloudApiFromConfig()
                 if (api != null) {
                     val sessions = api.getProjectSessions(projectId)
-                    // 选择最新的会话 (按 updatedAt > lastActiveAt > createdAt 降序)
+                    // 选择最新的会话 (按 lastActivity 降序)
                     val latestSession = sessions.maxByOrNull { session ->
-                        session.updatedAt
-                            ?: session.lastActiveAt
-                            ?: session.createdAt
-                            ?: ""
+                        session.getLastActivitySafe() ?: ""
                     }
                     _uiState.update { it.copy(isLoadingSessions = false) }
                     _navigationEvent.send(
-                        ChatNavigation(projectId, latestSession?.id ?: "")
+                        ChatNavigation(projectId, latestSession?.getIdSafe() ?: "")
                     )
                 } else {
                     // 未配置服务器，仍导航 (聊天页可处理)
