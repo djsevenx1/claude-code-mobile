@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.claudecode.mobile.network.TokenManager
 import kotlinx.coroutines.runBlocking
 
@@ -120,6 +121,13 @@ class MainActivity : ComponentActivity() {
                             rootContainer.setBackgroundColor(parsed)
                             window.statusBarColor = parsed
                             window.navigationBarColor = parsed
+                            // 根据背景亮度自动切换状态栏文字颜色
+                            // 浅色背景 → 深色文字，深色背景 → 浅色文字
+                            val isLight = isColorLight(parsed)
+                            WindowInsetsControllerCompat(window, window.decorView).apply {
+                                isAppearanceLightStatusBars = isLight
+                                isAppearanceLightNavigationBars = isLight
+                            }
                         } catch(e: Exception) {
                             e.printStackTrace()
                         }
@@ -282,6 +290,19 @@ class MainActivity : ComponentActivity() {
         } catch(e: Exception) {
             Color.parseColor("#1A1A1A")
         }
+    }
+
+    /**
+     * 判断颜色是否为浅色（用于决定状态栏文字用深色还是浅色）。
+     * 使用 W3C 标准的相对亮度公式。
+     */
+    private fun isColorLight(color: Int): Boolean {
+        val r = Color.red(color)
+        val g = Color.green(color)
+        val b = Color.blue(color)
+        // 使用感知亮度公式：0.299R + 0.587G + 0.114B
+        val brightness = 0.299 * r + 0.587 * g + 0.114 * b
+        return brightness > 128
     }
 
     private fun showErrorPage(baseUrl: String) {
