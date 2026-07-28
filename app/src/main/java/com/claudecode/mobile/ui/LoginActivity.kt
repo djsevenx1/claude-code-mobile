@@ -46,13 +46,22 @@ class LoginActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    LoginScreen { serverUrl ->
-                        lifecycleScope.launch {
-                            val normalized = tokenManager.normalizeUrl(serverUrl)
-                            tokenManager.saveServerUrl(normalized)
-                            openWebViewLogin(normalized)
-                        }
+                    // 从 DataStore 读取上次保存的服务器地址
+                    var savedUrl by remember { mutableStateOf("") }
+                    LaunchedEffect(Unit) {
+                        savedUrl = tokenManager.getServerUrl() ?: ""
                     }
+
+                    LoginScreen(
+                        initialServerUrl = savedUrl,
+                        onConnect = { serverUrl ->
+                            lifecycleScope.launch {
+                                val normalized = tokenManager.normalizeUrl(serverUrl)
+                                tokenManager.saveServerUrl(normalized)
+                                openWebViewLogin(normalized)
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -166,9 +175,10 @@ class LoginActivity : ComponentActivity() {
 
 @Composable
 private fun LoginScreen(
+    initialServerUrl: String = "",
     onConnect: (String) -> Unit
 ) {
-    var serverUrl by remember { mutableStateOf("http://SERVER_URL") }
+    var serverUrl by remember { mutableStateOf(initialServerUrl) }
     var isLoading by remember { mutableStateOf(false) }
 
     Column(
