@@ -168,7 +168,7 @@ class LoginActivity : ComponentActivity() {
 private fun LoginScreen(
     onConnect: (String) -> Unit
 ) {
-    var serverUrl by remember { mutableStateOf("") }
+    var serverUrl by remember { mutableStateOf("http://SERVER_URL") }
     var isLoading by remember { mutableStateOf(false) }
 
     Column(
