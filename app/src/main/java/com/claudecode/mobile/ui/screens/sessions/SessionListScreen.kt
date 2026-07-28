@@ -862,7 +862,7 @@ private fun ArchivedSessionsDialog(
                         ) {
                             items(
                                 items = sessions,
-                                key = { it.id }
+                                key = { it.getIdSafe() }
                             ) { session ->
                                 // 单条已归档会话项
                                 Row(
