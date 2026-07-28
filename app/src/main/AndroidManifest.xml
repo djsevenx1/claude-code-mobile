@@ -27,7 +27,7 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.ClaudeCodeMobile.Splash"
+            android:theme="@style/Theme.ClaudeCodeMobile"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

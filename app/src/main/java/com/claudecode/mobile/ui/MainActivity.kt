@@ -15,13 +15,11 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.lifecycleScope
 import com.claudecode.mobile.network.TokenManager
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 // ============================================================
 // 主 Activity (WebView 封装方案)
@@ -45,25 +43,21 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
 
-        // 不使用 enableEdgeToEdge()，因为它会把系统栏颜色重置为透明导致闪黑
-        // 改为手动开启 edge-to-edge 布局，系统栏颜色由主题 XML 控制
+        // 手动开启 edge-to-edge 布局（不用 enableEdgeToEdge 避免系统栏被重置为透明）
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        lifecycleScope.launch {
-            val serverUrl = tokenManager.getServerUrl()
-            val token = tokenManager.getToken()
-            val isLoggedIn = !token.isNullOrBlank() && !serverUrl.isNullOrBlank()
+        // 同步读取 token，避免异步延迟导致黑屏
+        val (serverUrl, token) = runBlocking {
+            Pair(tokenManager.getServerUrl(), tokenManager.getToken())
+        }
 
-            if (isLoggedIn && serverUrl != null && token != null) {
-                showWebView(serverUrl, token)
-            } else {
-                startActivity(Intent(this@MainActivity, LoginActivity::class.java))
-                finish()
-            }
-            splashScreen.setKeepOnScreenCondition { false }
+        if (!serverUrl.isNullOrBlank() && !token.isNullOrBlank()) {
+            showWebView(serverUrl, token)
+        } else {
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
         }
     }
 
@@ -89,6 +83,9 @@ class MainActivity : ComponentActivity() {
             allowUniversalAccessFromFileURLs = true
         }
 
+        // WebView 背景设为与网页一致的深色，加载期间不闪黑
+        webView.setBackgroundColor(Color.parseColor("#1A1A1A"))
+
         // --- Cookie 管理 ---
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -102,7 +99,6 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            // 与 splash 和系统栏初始颜色一致，网页加载后动态更新
             setBackgroundColor(Color.parseColor("#1A1A1A"))
         }
         rootContainer.addView(webView)
@@ -182,12 +178,11 @@ class MainActivity : ComponentActivity() {
                             } catch(e) {}
                             return null;
                         }
-                        // 依次尝试 body -> html -> #root -> header
                         var color = getBg(document.body)
                             || getBg(document.documentElement)
                             || getBg(document.getElementById('root'))
                             || getBg(document.querySelector('header'))
-                            || '#0F0F0F';
+                            || '#1A1A1A';
                         try {
                             AndroidBridge.setSystemBarColor(color);
                         } catch(e) {
