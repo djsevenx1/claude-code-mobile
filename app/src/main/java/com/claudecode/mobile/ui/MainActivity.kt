@@ -2,9 +2,9 @@ package com.claudecode.mobile.ui
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -32,9 +32,6 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private val tokenManager by lazy { TokenManager(applicationContext) }
-
-    // 状态栏高度（px），用于注入到 WebView CSS
-    private var statusBarHeightPx: Int = 0
 
     private var filePathCallback: android.webkit.ValueCallback<Array<Uri>?>? = null
 
@@ -70,12 +67,6 @@ class MainActivity : ComponentActivity() {
     private fun showWebView(baseUrl: String, token: String) {
         webView = WebView(this)
 
-        // 预读状态栏高度（资源方式，作为初始值，无需等待 insets）
-        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        if (resourceId > 0) {
-            statusBarHeightPx = resources.getDimensionPixelSize(resourceId)
-        }
-
         // --- WebView 配置 ---
         webView.settings.apply {
             javaScriptEnabled = true
@@ -109,9 +100,6 @@ class MainActivity : ComponentActivity() {
 
                 @JavascriptInterface
                 fun getServerUrl(): String = baseUrl
-
-                @JavascriptInterface
-                fun getStatusBarHeight(): Int = statusBarHeightPx
             },
             "AndroidBridge"
         )
@@ -153,57 +141,28 @@ class MainActivity : ComponentActivity() {
                     null
                 )
 
-                // 注入 CSS 修复头部遮挡（使用原生状态栏高度）
+                // 注入 CSS：仅处理滚动优化和隐藏 PWA 提示
+                // 不再处理 top/padding-top，由原生 container padding 统一处理
                 view.evaluateJavascript(
                     """
                     (function() {
-                        if (document.getElementById('mobile-fix-css')) {
-                            // 已注入过，更新状态栏高度即可
-                            var existing = document.getElementById('mobile-fix-css');
-                            var sbh = AndroidBridge.getStatusBarHeight();
-                            existing.textContent = ':root{--sb-h:' + sbh + 'px;}';
-                            return;
-                        }
-                        var sbh = AndroidBridge.getStatusBarHeight();
+                        if (document.getElementById('mobile-fix-css')) return;
                         var style = document.createElement('style');
                         style.id = 'mobile-fix-css';
                         style.textContent = `
-                            :root{--sb-h:${'$'}{sbh}px;}
-                            /* 顶部固定栏下移，避免被状态栏遮挡 */
-                            .fixed.top-0, header.fixed, nav.fixed, [class*="header"][class*="fixed"],
-                            .sticky.top-0, header.sticky {
-                                top: var(--sb-h, 0px) !important;
-                            }
-                            /* 全屏遮罩层也下移 */
-                            .fixed.inset-0 {
-                                top: var(--sb-h, 0px) !important;
-                            }
-                            /* body 顶部留出状态栏空间 */
                             html, body {
-                                padding-top: var(--sb-h, 0px) !important;
-                                box-sizing: border-box !important;
                                 overflow: hidden !important;
                                 overscroll-behavior: none !important;
                             }
-                            /* 底部安全区 */
-                            .chat-composer-shell {
-                                padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
-                            }
-                            .mobile-nav, [class*="mobile-nav"] {
-                                padding-bottom: env(safe-area-inset-bottom, 0px) !important;
-                            }
-                            /* 滚动优化 */
                             .flex.h-full, .flex.flex-1 { min-height: 0 !important; }
                             .overflow-y-auto, [class*="chat-messages"] {
                                 -webkit-overflow-scrolling: touch !important;
                                 overscroll-behavior: contain !important;
                             }
-                            /* 隐藏 PWA 安装提示 */
                             [class*="install-prompt"], [class*="pwa-install"] { display: none !important; }
                             [class*="overlay"]:not(.visible) { pointer-events: none !important; }
                         `;
                         document.head.appendChild(style);
-                        console.log('Mobile fix CSS injected, statusBarHeight=' + sbh + 'px');
                     })();
                     """.trimIndent(),
                     null
@@ -238,38 +197,22 @@ class MainActivity : ComponentActivity() {
         // 加载 Web 端
         webView.loadUrl(baseUrl)
 
-        // --- 用 FrameLayout 包裹 WebView ---
+        // --- 用 FrameLayout 包裹 WebView，用原生 padding 处理系统栏 ---
+        // WebView 的 position:fixed 元素相对于 WebView 视口定位，
+        // 容器加 padding 后，WebView 整体下移，fixed 元素自然在状态栏下方
         val container = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            setBackgroundColor(Color.BLACK)
         }
         container.addView(webView)
 
-        // 监听 WindowInsets 获取精确状态栏高度，更新 CSS 变量
-        // 注意：不使用原生 padding，而是通过 CSS 注入处理，
-        // 这样状态栏区域会自动显示网页背景色，不会出现颜色不匹配
-        ViewCompat.setOnApplyWindowInsetsListener(container) { _, insets ->
+        // 应用 WindowInsets：状态栏高度作为顶部 padding，导航栏高度作为底部 padding
+        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            if (systemBars.top > 0 && systemBars.top != statusBarHeightPx) {
-                statusBarHeightPx = systemBars.top
-                // 重新注入 CSS 更新状态栏高度
-                if (::webView.isInitialized) {
-                    webView.evaluateJavascript(
-                        """
-                        (function() {
-                            var sbh = AndroidBridge.getStatusBarHeight();
-                            var el = document.getElementById('mobile-fix-css');
-                            if (el) {
-                                el.textContent = el.textContent.replace(/--sb-h:\d+px;/, '--sb-h:' + sbh + 'px;');
-                            }
-                        })();
-                        """.trimIndent(),
-                        null
-                    )
-                }
-            }
+            v.setPadding(0, systemBars.top, 0, systemBars.bottom)
             insets
         }
 
