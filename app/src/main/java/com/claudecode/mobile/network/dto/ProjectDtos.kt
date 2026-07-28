@@ -339,15 +339,22 @@ data class MessageHistoryData(
  * 历史消息项
  *
  * 对应 claudecodeui 服务端 NormalizedMessage 格式。
+ * 服务端 kind 值: text / tool_use / tool_result / thinking / error / complete 等。
+ * 服务端 role 值: user / assistant。
+ *
+ * 注意: 服务端的 toolInput 为 unknown 类型 (可能是字符串或对象),
+ * toolResult 为 { content, isError, toolUseResult } 对象,
+ * 因此使用 JsonElement 接收, 再通过 safe getter 转为字符串。
  *
  * @param id 消息标识
- * @param kind 消息类型（user/assistant/tool_use/tool_result/thinking 等）
+ * @param kind 消息类型 (text/tool_use/tool_result/thinking/error/complete 等)
  * @param content 消息文本内容
- * @param text 文本内容（部分版本使用此字段）
- * @param role 消息角色（user/assistant）
- * @param toolName 工具名称（仅工具调用消息）
- * @param toolInput 工具输入参数
- * @param toolResult 工具执行结果
+ * @param displayText 显示文本 (服务端可能用此字段存储可读文本)
+ * @param text 文本内容 (部分版本使用此字段)
+ * @param role 消息角色 (user/assistant)
+ * @param toolName 工具名称 (仅工具调用消息)
+ * @param toolInput 工具输入参数 (JsonElement, 可能是字符串或对象)
+ * @param toolResult 工具执行结果 (JsonElement, 是 { content, isError } 对象)
  * @param thinking 思考过程内容
  * @param timestamp 时间戳
  * @param seq 事件序号
@@ -359,6 +366,7 @@ data class HistoryMessage(
     val id: String? = null,
     val kind: String = "",
     val content: String? = null,
+    val displayText: String? = null,
     val text: String? = null,
     val role: String? = null,
     @SerialName("toolName")
@@ -366,13 +374,13 @@ data class HistoryMessage(
     @SerialName("tool_name")
     val toolNameAlt: String? = null,
     @SerialName("toolInput")
-    val toolInput: String? = null,
+    val toolInput: JsonElement? = null,
     @SerialName("tool_input")
-    val toolInputAlt: String? = null,
+    val toolInputAlt: JsonElement? = null,
     @SerialName("toolResult")
-    val toolResult: String? = null,
+    val toolResult: JsonElement? = null,
     @SerialName("tool_result")
-    val toolResultAlt: String? = null,
+    val toolResultAlt: JsonElement? = null,
     val thinking: String? = null,
     val timestamp: String? = null,
     val seq: Int? = null,
@@ -382,18 +390,47 @@ data class HistoryMessage(
     @SerialName("token_usage")
     val tokenUsageAlt: JsonElement? = null
 ) {
-    /** 统一获取文本内容 */
-    fun getTextSafe(): String? = content ?: text
+    /** 统一获取文本内容 (优先 content, 回退 displayText, 再回退 text) */
+    fun getTextSafe(): String? = content ?: displayText ?: text
 
     /** 统一获取工具名称 */
     fun getToolNameSafe(): String? = toolName ?: toolNameAlt
 
-    /** 统一获取工具输入 */
-    fun getToolInputSafe(): String? = toolInput ?: toolInputAlt
+    /**
+     * 统一获取工具输入 (将 JsonElement 转为可读字符串)
+     * 服务端可能返回字符串、对象或数组, 统一转为字符串展示。
+     */
+    fun getToolInputSafe(): String? {
+        val elem = toolInput ?: toolInputAlt ?: return null
+        return jsonElementToString(elem)
+    }
 
-    /** 统一获取工具结果 */
-    fun getToolResultSafe(): String? = toolResult ?: toolResultAlt
+    /**
+     * 统一获取工具结果 (将 JsonElement 转为可读字符串)
+     * 服务端返回 { content, isError, toolUseResult } 对象, 提取 content 字段。
+     */
+    fun getToolResultSafe(): String? {
+        val elem = toolResult ?: toolResultAlt ?: return null
+        // 如果是对象, 尝试提取 content 字段
+        if (elem is kotlinx.serialization.json.JsonObject) {
+            val contentField = elem["content"]
+            if (contentField is kotlinx.serialization.json.JsonPrimitive) {
+                return contentField.content
+            }
+        }
+        return jsonElementToString(elem)
+    }
 
     /** 统一获取 token 用量 */
     fun getTokenUsageSafe(): JsonElement? = tokenUsage ?: tokenUsageAlt
+
+    /** 将 JsonElement 转为可读字符串 */
+    private fun jsonElementToString(elem: JsonElement): String {
+        return when (elem) {
+            is kotlinx.serialization.json.JsonPrimitive -> elem.content
+            is kotlinx.serialization.json.JsonObject -> elem.toString()
+            is kotlinx.serialization.json.JsonArray -> elem.toString()
+            else -> elem.toString()
+        }
+    }
 }

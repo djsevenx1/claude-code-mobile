@@ -770,35 +770,43 @@ class ChatViewModel(
      *
      * 先从 Room 本地缓存查询项目名称，同时通过 API 获取项目路径。
      * 项目路径用于创建会话 (POST /api/providers/sessions) 和发送消息 (chat.send)。
+     *
+     * 重要: 消息历史加载不依赖于项目是否找到, 只要有 sessionId 就独立加载。
      */
     private fun loadProjectInfoAndPath() {
         viewModelScope.launch {
+            // 先从本地加载项目名称
             try {
-                // 先从本地加载项目名称
                 val project = projectDao.getById(projectId)
                 _uiState.update { it.copy(projectName = project?.name ?: projectId) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(projectName = projectId) }
+            }
 
-                // 通过 API 获取项目路径
-                val api = NetworkModule.createCloudApiFromConfig()
-                if (api != null) {
-                    val projects = api.getProjects()
-                    val serverProject = projects.find { it.id == projectId }
-                    if (serverProject != null) {
-                        _uiState.update {
-                            it.copy(
-                                projectName = serverProject.getDisplayNameSafe(),
-                                projectPath = serverProject.getPathSafe()
-                            )
-                        }
-
-                        // 若已有 sessionId，加载服务端消息历史
-                        if (initialSessionId.isNotBlank()) {
-                            loadServerMessageHistory(initialSessionId)
+            // 通过 API 获取项目路径 (独立于消息历史加载)
+            viewModelScope.launch {
+                try {
+                    val api = NetworkModule.createCloudApiFromConfig()
+                    if (api != null) {
+                        val projects = api.getProjects()
+                        val serverProject = projects.find { it.getIdSafe() == projectId }
+                        if (serverProject != null) {
+                            _uiState.update {
+                                it.copy(
+                                    projectName = serverProject.getDisplayNameSafe(),
+                                    projectPath = serverProject.getPathSafe()
+                                )
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    // 项目信息加载失败不影响消息历史加载
                 }
-            } catch (e: Exception) {
-                // API 加载失败不影响本地缓存的使用
+            }
+
+            // 独立加载消息历史 (不依赖项目是否找到)
+            if (initialSessionId.isNotBlank()) {
+                loadServerMessageHistory(initialSessionId)
             }
         }
     }
@@ -809,6 +817,8 @@ class ChatViewModel(
      * 调用 GET /api/providers/sessions/{sessionId}/messages 获取服务端历史消息，
      * 转换为 [ChatUiMessage] 后更新 UI。
      * 同时订阅会话事件流以便接收后续实时消息。
+     *
+     * 服务端响应格式: { success: true, data: { messages: [...], total, hasMore, ... } }
      *
      * @param sessionId 会话标识
      */
@@ -824,14 +834,31 @@ class ChatViewModel(
                         val uiMessages = historyMessages.map { it.toUiMessage() }
                         _uiState.update { it.copy(messages = uiMessages) }
                     }
+                } else if (!response.success) {
+                    // 服务端返回失败, 添加错误提示
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + ChatUiMessage(
+                                role = MessageRole.SYSTEM,
+                                content = "加载消息历史失败"
+                            )
+                        )
+                    }
                 }
 
                 // 订阅会话事件流 (断线重连后可重放)
                 webSocketClient.sendSubscribe(sessionId, lastSeq)
 
             } catch (e: Exception) {
-                // 服务端历史加载失败，回退到本地缓存
+                // 服务端历史加载失败, 尝试本地缓存
                 loadLocalHistory(sessionId)
+
+                // 订阅会话事件流 (即使历史加载失败也订阅, 以接收新消息)
+                try {
+                    webSocketClient.sendSubscribe(sessionId, lastSeq)
+                } catch (_: Exception) {
+                    // 订阅失败忽略
+                }
             }
         }
     }
@@ -914,23 +941,54 @@ class ChatViewModel(
      *
      * 将 [HistoryMessage] (claudecodeui 服务端 NormalizedMessage 格式)
      * 转换为 UI 层使用的 [ChatUiMessage]。
+     *
+     * 服务端 kind 值: text / tool_use / tool_result / thinking / error / complete 等。
+     * 服务端 role 值: user / assistant。
+     * 正常文本消息 kind="text", 通过 role 区分用户/AI。
      */
     private fun HistoryMessage.toUiMessage(): ChatUiMessage {
+        // 角色判断: 优先用 role 字段, kind 作为辅助判断
         val roleEnum = when {
-            kind == "user" || role == "user" -> MessageRole.USER
+            // 工具相关消息归为助手角色
             kind == "tool_use" || kind == "tool_result" -> MessageRole.ASSISTANT
             kind == "error" -> MessageRole.ERROR
+            // 正常文本消息通过 role 字段判断
+            role == "user" -> MessageRole.USER
+            role == "assistant" -> MessageRole.ASSISTANT
+            // 兼容旧版 kind 值
+            kind == "user" -> MessageRole.USER
+            kind == "assistant" -> MessageRole.ASSISTANT
+            // 默认归为助手 (大多数历史消息是 AI 回复)
             else -> MessageRole.ASSISTANT
         }
+
+        // 内容提取: 根据 kind 使用不同字段
         val content = when (kind) {
-            "tool_use" -> getToolInputSafe() ?: getTextSafe() ?: ""
-            "tool_result" -> getToolResultSafe() ?: getTextSafe() ?: ""
-            else -> getTextSafe() ?: ""
+            "tool_use" -> {
+                // 工具调用: 展示工具名称和输入
+                val input = getToolInputSafe() ?: getTextSafe() ?: ""
+                input
+            }
+            "tool_result" -> {
+                // 工具结果: 提取 result 对象中的 content 字段
+                getToolResultSafe() ?: getTextSafe() ?: ""
+            }
+            "thinking" -> {
+                // 思考过程: 优先用 thinking 字段, 回退到 text
+                thinking ?: getTextSafe() ?: ""
+            }
+            else -> {
+                // 正常文本消息
+                getTextSafe() ?: ""
+            }
         }
+
+        // 工具名称 (仅工具调用消息)
         val toolName = when (kind) {
             "tool_use", "tool_result" -> getToolNameSafe()
             else -> null
         }
+
         return ChatUiMessage(
             id = id ?: UUID.randomUUID().toString(),
             role = roleEnum,
@@ -938,7 +996,7 @@ class ChatViewModel(
             isStreaming = false,
             timestamp = System.currentTimeMillis(),
             toolName = toolName,
-            thinking = thinking
+            thinking = if (kind == "thinking") thinking else null
         )
     }
 
