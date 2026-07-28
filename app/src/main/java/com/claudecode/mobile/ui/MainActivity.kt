@@ -49,6 +49,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // 立即设置系统栏颜色，避免启动瞬间闪黑
+        // 使用与网页背景一致的深色，网页加载后动态更新
+        val initialBarColor = Color.parseColor("#1A1A1A")
+        window.statusBarColor = initialBarColor
+        window.navigationBarColor = initialBarColor
+
         lifecycleScope.launch {
             val serverUrl = tokenManager.getServerUrl()
             val token = tokenManager.getToken()
@@ -99,8 +105,8 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            // 初始用深色，网页加载后会动态读取背景色更新
-            setBackgroundColor(Color.parseColor("#0F0F0F"))
+            // 与 splash 和系统栏初始颜色一致，网页加载后动态更新
+            setBackgroundColor(Color.parseColor("#1A1A1A"))
         }
         rootContainer.addView(webView)
 
@@ -279,10 +285,10 @@ class MainActivity : ComponentActivity() {
                     val b = nums.getOrElse(2) { 0f }.toInt()
                     Color.rgb(r, g, b)
                 }
-                else -> Color.parseColor("#0F0F0F")
+                else -> Color.parseColor("#1A1A1A")
             }
         } catch(e: Exception) {
-            Color.parseColor("#0F0F0F")
+            Color.parseColor("#1A1A1A")
         }
     }
 

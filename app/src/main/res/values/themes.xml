@@ -21,8 +21,8 @@
 
     <!-- Splash Screen 主题 (启动画面) -->
     <style name="Theme.ClaudeCodeMobile.Splash" parent="Theme.SplashScreen">
-        <!-- Splash 背景色 (品牌主色) -->
-        <item name="windowSplashScreenBackground">@color/colorPrimary</item>
+        <!-- Splash 背景色与网页背景一致，避免启动闪黑 -->
+        <item name="windowSplashScreenBackground">@color/dark_background</item>
         <!-- Splash 图标 (使用 launcher 前景图标) -->
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
         <!-- Splash 结束后切换到主主题 -->
