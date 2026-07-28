@@ -14,10 +14,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.claudecode.mobile.network.TokenManager
@@ -47,13 +47,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
 
-        // 立即设置系统栏颜色，避免启动瞬间闪黑
-        // 使用与网页背景一致的深色，网页加载后动态更新
-        val initialBarColor = Color.parseColor("#1A1A1A")
-        window.statusBarColor = initialBarColor
-        window.navigationBarColor = initialBarColor
+        // 不使用 enableEdgeToEdge()，因为它会把系统栏颜色重置为透明导致闪黑
+        // 改为手动开启 edge-to-edge 布局，系统栏颜色由主题 XML 控制
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         lifecycleScope.launch {
             val serverUrl = tokenManager.getServerUrl()
