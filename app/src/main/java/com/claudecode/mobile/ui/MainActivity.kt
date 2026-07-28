@@ -12,10 +12,13 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.claudecode.mobile.network.TokenManager
 import kotlinx.coroutines.launch
@@ -29,6 +32,9 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private val tokenManager by lazy { TokenManager(applicationContext) }
+
+    // 状态栏高度（px），用于注入到 WebView CSS
+    private var statusBarHeightPx: Int = 0
 
     private var filePathCallback: android.webkit.ValueCallback<Array<Uri>?>? = null
 
@@ -64,6 +70,12 @@ class MainActivity : ComponentActivity() {
     private fun showWebView(baseUrl: String, token: String) {
         webView = WebView(this)
 
+        // 预读状态栏高度（资源方式，作为初始值，无需等待 insets）
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        if (resourceId > 0) {
+            statusBarHeightPx = resources.getDimensionPixelSize(resourceId)
+        }
+
         // --- WebView 配置 ---
         webView.settings.apply {
             javaScriptEnabled = true
@@ -97,6 +109,9 @@ class MainActivity : ComponentActivity() {
 
                 @JavascriptInterface
                 fun getServerUrl(): String = baseUrl
+
+                @JavascriptInterface
+                fun getStatusBarHeight(): Int = statusBarHeightPx
             },
             "AndroidBridge"
         )
@@ -138,58 +153,57 @@ class MainActivity : ComponentActivity() {
                     null
                 )
 
-                // 注入 CSS 修复头部遮挡
+                // 注入 CSS 修复头部遮挡（使用原生状态栏高度）
                 view.evaluateJavascript(
                     """
                     (function() {
-                        if (document.getElementById('mobile-fix-css')) return;
+                        if (document.getElementById('mobile-fix-css')) {
+                            // 已注入过，更新状态栏高度即可
+                            var existing = document.getElementById('mobile-fix-css');
+                            var sbh = AndroidBridge.getStatusBarHeight();
+                            existing.textContent = ':root{--sb-h:' + sbh + 'px;}';
+                            return;
+                        }
+                        var sbh = AndroidBridge.getStatusBarHeight();
                         var style = document.createElement('style');
                         style.id = 'mobile-fix-css';
                         style.textContent = `
-                            #root {
-                                padding-top: 0px !important;
-                                padding-left: 0px !important;
-                                padding-right: 0px !important;
+                            :root{--sb-h:${'$'}{sbh}px;}
+                            /* 顶部固定栏下移，避免被状态栏遮挡 */
+                            .fixed.top-0, header.fixed, nav.fixed, [class*="header"][class*="fixed"],
+                            .sticky.top-0, header.sticky {
+                                top: var(--sb-h, 0px) !important;
                             }
-                            body.pwa-mode .fixed.inset-0,
+                            /* 全屏遮罩层也下移 */
                             .fixed.inset-0 {
-                                top: 0px !important;
-                                left: 0px !important;
-                                right: 0px !important;
+                                top: var(--sb-h, 0px) !important;
                             }
-                            .pwa-header-safe {
-                                padding-top: env(safe-area-inset-top, 0px) !important;
-                            }
+                            /* body 顶部留出状态栏空间 */
                             html, body {
+                                padding-top: var(--sb-h, 0px) !important;
+                                box-sizing: border-box !important;
                                 overflow: hidden !important;
                                 overscroll-behavior: none !important;
                             }
+                            /* 底部安全区 */
                             .chat-composer-shell {
                                 padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
                             }
-                            .flex.h-full,
-                            .flex.flex-1 {
-                                min-height: 0 !important;
-                            }
-                            [class*="overlay"]:not(.visible) {
-                                pointer-events: none !important;
-                            }
-                            [class*="install-prompt"],
-                            [class*="pwa-install"] {
-                                display: none !important;
-                            }
-                            .mobile-nav,
-                            [class*="mobile-nav"] {
+                            .mobile-nav, [class*="mobile-nav"] {
                                 padding-bottom: env(safe-area-inset-bottom, 0px) !important;
                             }
-                            .overflow-y-auto,
-                            [class*="chat-messages"] {
+                            /* 滚动优化 */
+                            .flex.h-full, .flex.flex-1 { min-height: 0 !important; }
+                            .overflow-y-auto, [class*="chat-messages"] {
                                 -webkit-overflow-scrolling: touch !important;
                                 overscroll-behavior: contain !important;
                             }
+                            /* 隐藏 PWA 安装提示 */
+                            [class*="install-prompt"], [class*="pwa-install"] { display: none !important; }
+                            [class*="overlay"]:not(.visible) { pointer-events: none !important; }
                         `;
                         document.head.appendChild(style);
-                        console.log('Mobile fix CSS injected');
+                        console.log('Mobile fix CSS injected, statusBarHeight=' + sbh + 'px');
                     })();
                     """.trimIndent(),
                     null
@@ -223,7 +237,43 @@ class MainActivity : ComponentActivity() {
 
         // 加载 Web 端
         webView.loadUrl(baseUrl)
-        setContentView(webView)
+
+        // --- 用 FrameLayout 包裹 WebView ---
+        val container = FrameLayout(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        container.addView(webView)
+
+        // 监听 WindowInsets 获取精确状态栏高度，更新 CSS 变量
+        // 注意：不使用原生 padding，而是通过 CSS 注入处理，
+        // 这样状态栏区域会自动显示网页背景色，不会出现颜色不匹配
+        ViewCompat.setOnApplyWindowInsetsListener(container) { _, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            if (systemBars.top > 0 && systemBars.top != statusBarHeightPx) {
+                statusBarHeightPx = systemBars.top
+                // 重新注入 CSS 更新状态栏高度
+                if (::webView.isInitialized) {
+                    webView.evaluateJavascript(
+                        """
+                        (function() {
+                            var sbh = AndroidBridge.getStatusBarHeight();
+                            var el = document.getElementById('mobile-fix-css');
+                            if (el) {
+                                el.textContent = el.textContent.replace(/--sb-h:\d+px;/, '--sb-h:' + sbh + 'px;');
+                            }
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
+                }
+            }
+            insets
+        }
+
+        setContentView(container)
     }
 
     private fun showErrorPage(baseUrl: String) {
